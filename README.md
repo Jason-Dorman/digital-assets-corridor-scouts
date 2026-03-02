@@ -133,6 +133,28 @@ docker-compose down
 docker-compose down -v
 ```
 
+### Tests
+```bash
+# Run unit tests
+npm run test:unit
+
+# Run tests with coverage report
+npm run test:coverage
+```
+
+### Smoke Test
+Validates that all infrastructure dependencies are reachable (Postgres, Redis, Alchemy RPC). Requires Docker containers to be running and `.env.local` to be configured.
+
+```bash
+npm run smoke-test
+```
+
+Each check prints a pass/fail result:
+- **env vars** — required variables present in `.env.local`
+- **database** — Postgres connection and query
+- **redis** — Redis connection
+- **rpc** — Alchemy API key and Ethereum RPC
+
 ---
 
 ## Documentation
