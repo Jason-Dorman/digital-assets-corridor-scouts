@@ -1,6 +1,6 @@
 # Corridor Scouts
 
-> Real-time cross-chain bridge monitoring and corridor health analytics
+> Real-time cross-chain transfer intelligence, bridge monitoring and corridor health analytics
 
 [![Status](https://img.shields.io/badge/status-under%20development-yellow)](https://github.com/your-org/corridor-scouts)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -9,7 +9,7 @@
 
 ## About
 
-Corridor Scouts is a public dashboard and data infrastructure for monitoring cross-chain bridge health in real-time. The system tracks transfer flows, settlement times, and liquidity dynamics across major DeFi bridges including Across, CCTP, Stargate, and others.
+Corridor Scouts is a public dashboard and data infrastructure for monitoring and analyzing cross-chain transfer intelligence in real-time. The system tracks transfer flows, settlement times, and liquidity dynamics across major DeFi bridges including Across, CCTP, Stargate, and others.
 
 **Key Features:**
 - **Corridor Health Monitoring** - Real-time status tracking for bridge routes
@@ -19,7 +19,7 @@ Corridor Scouts is a public dashboard and data infrastructure for monitoring cro
 - **Impact Preview** - Estimate liquidity impact before large transfers
 
 **What We're Building:**
-- Public dashboard exposing corridor health metrics
+- Public dashboard gathering cross-chain transfer intelligence
 - WebSocket support for real-time updates
 - Data collection infrastructure for future structural DeFi metrics
 
