@@ -101,7 +101,238 @@ const STABLECOINS = ['USDC', 'USDT', 'DAI'] as const;
 
 ---
 
-## 3. Transfer Size Buckets
+## 3. Token Registry
+
+The token registry maps on-chain token addresses to human-readable symbols and decimal precision. Scouts emit raw `tokenAddress`, the processor uses this registry to resolve `symbol`, `rawSymbol`, and `decimals`.
+
+### 3.1 Token Info Interface
+
+```typescript
+interface TokenInfo {
+  symbol: string;
+  /** Exact on-chain ERC-20 symbol. Present only when it differs from `symbol`. */
+  rawSymbol?: string;
+  decimals: number;
+}
+```
+
+**Canonical vs raw symbol:**
+
+Some tokens have on-chain symbols that differ from the standard name (e.g. bridged Avalanche tokens use `.e` suffix, Polygon/Arbitrum USDT variants use `USDT0`/`USD₮0`). The registry captures both:
+
+- `symbol` — canonical name used for aggregation queries (e.g. `'USDT'`)
+- `rawSymbol` — exact on-chain contract symbol when it differs (e.g. `'USDT0'`). Absent when identical to `symbol`.
+
+The transfers table stores both as `asset` (canonical) and `asset_raw` (null when same as canonical).
+
+### 3.2 Registry Structure
+
+```typescript
+// Mapping: chainId → tokenAddress (lowercase) → TokenInfo
+const TOKEN_REGISTRY: Record<number, Record<string, TokenInfo>> = {
+  // Ethereum (1)
+  1: {
+    '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48': { symbol: 'USDC', decimals: 6 },
+    '0xdac17f958d2ee523a2206206994597c13d831ec7': { symbol: 'USDT', decimals: 6 },
+    '0x6b175474e89094c44da98b954eedeac495271d0f': { symbol: 'DAI', decimals: 18 },
+    '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2': { symbol: 'WETH', decimals: 18 },
+  },
+  // Arbitrum (42161)
+  42161: {
+    '0xaf88d065e77c8cc2239327c5edb3a432268e5831': { symbol: 'USDC', decimals: 6 },
+    '0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9': { symbol: 'USDT', rawSymbol: 'USD₮0', decimals: 6 },
+    '0xda10009cbd5d07dd0cecc66161fc93d7c9000da1': { symbol: 'DAI', decimals: 18 },
+    '0x82af49447d8a07e3bd95bd0d56f35241523fbab1': { symbol: 'WETH', decimals: 18 },
+  },
+  // Optimism (10)
+  10: {
+    '0x0b2c639c533813f4aa9d7837caf62653d097ff85': { symbol: 'USDC', decimals: 6 },
+    '0x94b008aa00579c1307b0ef2c499ad98a8ce58e58': { symbol: 'USDT', decimals: 6 },
+    '0xda10009cbd5d07dd0cecc66161fc93d7c9000da1': { symbol: 'DAI', decimals: 18 },
+    '0x4200000000000000000000000000000000000006': { symbol: 'WETH', decimals: 18 },
+  },
+  // Base (8453)
+  8453: {
+    '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913': { symbol: 'USDC', decimals: 6 },
+    '0x4200000000000000000000000000000000000006': { symbol: 'WETH', decimals: 18 },
+  },
+  // Polygon (137)
+  137: {
+    '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359': { symbol: 'USDC', decimals: 6 },
+    '0xc2132d05d31c914a87c6611c10748aeb04b58e8f': { symbol: 'USDT', rawSymbol: 'USDT0', decimals: 6 },
+    '0x8f3cf7ad23cd3cadbd9735aff958023239c6a063': { symbol: 'DAI', decimals: 18 },
+    '0x7ceb23fd6bc0add59e62ac25578270cff1b9f619': { symbol: 'WETH', decimals: 18 },
+  },
+  // Avalanche (43114)
+  43114: {
+    '0xb97ef9ef8734c71904d8002f8b6bc66dd9c48a6e': { symbol: 'USDC', decimals: 6 },
+    '0x9702230a8ea53601f5cd2dc00fdbc13d4df4a8c7': { symbol: 'USDT', rawSymbol: 'USDt', decimals: 6 },
+    '0xd586e7f844cea2f87f50152665bcbc2c279d8d70': { symbol: 'DAI', rawSymbol: 'DAI.e', decimals: 18 },
+    '0x49d5c2bdffac6ce2bfdb6640f4f80f226bc10bab': { symbol: 'WETH', rawSymbol: 'WETH.e', decimals: 18 },
+  },
+};
+```
+
+### 3.3 Lookup Functions
+
+```typescript
+function getTokenInfo(chainId: number, tokenAddress: string): TokenInfo | null {
+  const chainTokens = TOKEN_REGISTRY[chainId];
+  if (!chainTokens) return null;
+  return chainTokens[tokenAddress.toLowerCase()] ?? null;
+}
+
+// Returns canonical symbol (for aggregation). Falls back to address if unknown.
+function getSymbol(chainId: number, tokenAddress: string): string {
+  const info = getTokenInfo(chainId, tokenAddress);
+  return info?.symbol ?? tokenAddress;
+}
+
+// Returns exact on-chain symbol. Falls back to canonical when rawSymbol absent,
+// and to address when token is entirely unknown.
+function getRawSymbol(chainId: number, tokenAddress: string): string {
+  const info = getTokenInfo(chainId, tokenAddress);
+  if (!info) return tokenAddress;
+  return info.rawSymbol ?? info.symbol;
+}
+
+function getDecimals(chainId: number, tokenAddress: string): number {
+  const info = getTokenInfo(chainId, tokenAddress);
+  return info?.decimals ?? 18; // Default to 18 if unknown
+}
+```
+
+### 3.4 Amount Normalization
+
+```typescript
+function normalizeAmount(rawAmount: bigint, decimals: number): number {
+  return Number(rawAmount) / Math.pow(10, decimals);
+}
+
+// Usage in processor:
+// const tokenInfo = getTokenInfo(chainId, event.tokenAddress);
+// const normalizedAmount = normalizeAmount(event.amount, tokenInfo?.decimals ?? 18);
+```
+
+---
+
+## 4. Price Service
+
+The price service provides USD prices for tokens. Used by the processor to calculate `amountUsd`.
+
+### 4.1 Interface
+
+```typescript
+interface PriceService {
+  getPrice(symbol: string): Promise<number>;
+  getPrices(symbols: string[]): Promise<Record<string, number>>;
+}
+```
+
+### 4.2 Implementation Strategy
+
+For Phase 0, use a simple approach:
+
+1. **Stablecoins (USDC, USDT, DAI)**: Hardcode $1.00
+2. **ETH/WETH**: Fetch from CoinGecko free API (no key required)
+3. **Cache prices**: 5 minute TTL to avoid rate limits
+
+```typescript
+const STABLECOIN_PRICE = 1.0;
+const PRICE_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+class SimplePriceService implements PriceService {
+  private cache: Map<string, { price: number; fetchedAt: number }> = new Map();
+
+  async getPrice(symbol: string): Promise<number> {
+    // Stablecoins are always $1
+    if (['USDC', 'USDT', 'DAI'].includes(symbol)) {
+      return STABLECOIN_PRICE;
+    }
+
+    // Check cache
+    const cached = this.cache.get(symbol);
+    if (cached && Date.now() - cached.fetchedAt < PRICE_CACHE_TTL_MS) {
+      return cached.price;
+    }
+
+    // Fetch from CoinGecko
+    const price = await this.fetchFromCoinGecko(symbol);
+    this.cache.set(symbol, { price, fetchedAt: Date.now() });
+    return price;
+  }
+
+  private async fetchFromCoinGecko(symbol: string): Promise<number> {
+    const coinId = SYMBOL_TO_COINGECKO_ID[symbol];
+    if (!coinId) return 0;
+
+    try {
+      const response = await fetch(
+        `https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usd`
+      );
+      const data = await response.json();
+      return data[coinId]?.usd ?? 0;
+    } catch (error) {
+      console.error(`Failed to fetch price for ${symbol}:`, error);
+      return 0;
+    }
+  }
+
+  async getPrices(symbols: string[]): Promise<Record<string, number>> {
+    const prices: Record<string, number> = {};
+    for (const symbol of symbols) {
+      prices[symbol] = await this.getPrice(symbol);
+    }
+    return prices;
+  }
+}
+
+const SYMBOL_TO_COINGECKO_ID: Record<string, string> = {
+  ETH: 'ethereum',
+  WETH: 'ethereum',
+  // Add more as needed
+};
+```
+
+### 4.3 Processor Enrichment Flow
+
+```typescript
+// In TransferProcessor.handleInitiation():
+
+// 1. Resolve token
+const chainId = CHAIN_IDS[event.sourceChain];
+const tokenInfo = getTokenInfo(chainId, event.tokenAddress);
+const symbol = tokenInfo?.symbol ?? event.tokenAddress;
+// null when on-chain symbol matches canonical (null-means-same convention)
+const assetRaw = tokenInfo?.rawSymbol ?? null;
+const decimals = tokenInfo?.decimals ?? 18;
+
+// 2. Normalize amount
+const normalizedAmount = normalizeAmount(event.amount, decimals);
+
+// 3. Get price (uses canonical symbol — stablecoins = $1, ETH/WETH = CoinGecko)
+const price = await priceService.getPrice(symbol);
+
+// 4. Calculate USD value
+const amountUsd = price > 0 ? normalizedAmount * price : null;
+
+// 5. Get size bucket
+const transferSizeBucket = amountUsd != null && amountUsd > 0 ? getSizeBucket(amountUsd) : null;
+
+// 6. Store in database
+await db.transfers.insert({
+  // ... other fields
+  asset: symbol,      // canonical — use for aggregation queries
+  assetRaw,           // exact on-chain symbol — null when same as asset
+  amount: event.amount.toString(),
+  amountUsd,
+  transferSizeBucket,
+});
+```
+
+---
+
+## 5. Transfer Size Buckets
 
 ### 3.1 Definition
 
@@ -125,7 +356,7 @@ function getSizeBucket(amountUsd: number): string {
 
 ---
 
-## 4. Stuck Transfer Detection
+## 6. Stuck Transfer Detection
 
 ### 4.1 Thresholds by Bridge
 
@@ -154,7 +385,7 @@ function isStuck(transfer: Transfer, now: Date): boolean {
 
 ---
 
-## 5. Fragility Calculation
+## 7. Fragility Calculation
 
 ### 5.1 Inputs
 
@@ -250,7 +481,7 @@ function calculateFragility(
 
 ---
 
-## 6. Impact Calculation
+## 8. Impact Calculation
 
 ### 6.1 Slippage Factors by Bridge
 
@@ -355,7 +586,7 @@ estimatedSlippageBps = poolSharePct × slippageFactor × 10
 
 ---
 
-## 7. Liquidity Flight Velocity (LFV)
+## 9. Liquidity Flight Velocity (LFV)
 
 ### 7.1 Definition
 
@@ -466,7 +697,7 @@ function interpretLFV(lfv24h: number): LFVInterpretation {
 
 ---
 
-## 8. Corridor Health Status
+## 10. Corridor Health Status
 
 ### 8.1 Inputs
 
@@ -518,7 +749,7 @@ latencyMultiplier = currentP90 / historicalP90
 
 ---
 
-## 9. Anomaly Detection
+## 11. Anomaly Detection
 
 ### 9.1 Latency Spike Detection
 
@@ -580,7 +811,7 @@ function detectLiquidityDrop(
 
 ---
 
-## 10. Percentile Calculations
+## 12. Percentile Calculations
 
 ### 10.1 p50 (Median) and p90
 
@@ -621,7 +852,7 @@ function calculateSuccessRate(
 
 ---
 
-## 11. Time Windows
+## 13. Time Windows
 
 ### 11.1 Standard Windows
 
@@ -641,7 +872,7 @@ function calculateSuccessRate(
 
 ---
 
-## 12. API Response Rounding
+## 14. API Response Rounding
 
 ### 12.1 Precision Rules
 
@@ -657,7 +888,7 @@ function calculateSuccessRate(
 
 ---
 
-## 13. Transfer ID Formats
+## 15. Transfer ID Formats
 
 ### 13.1 By Bridge
 

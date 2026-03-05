@@ -17,6 +17,7 @@ model Transfer {
   sourceChain        String    @map("source_chain")
   destChain          String    @map("dest_chain")
   asset              String
+  assetRaw           String?   @map("asset_raw")
   amount             Decimal
   amountUsd          Decimal?  @map("amount_usd")
   initiatedAt        DateTime  @map("initiated_at")

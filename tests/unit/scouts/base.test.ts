@@ -53,11 +53,11 @@ class StubScout extends BaseScout {
     return '0x000000000000000000000000000000000000dead';
   }
 
-  parseDepositEvent(_log: Log, _chainId: number): TransferEvent | null {
+  parseDepositEvent(_log: Log, _chainId: number, _timestamp: Date): TransferEvent | null {
     return null;
   }
 
-  parseFillEvent(_log: Log, _chainId: number): TransferEvent | null {
+  parseFillEvent(_log: Log, _chainId: number, _timestamp: Date): TransferEvent | null {
     return null;
   }
 
@@ -67,9 +67,6 @@ class StubScout extends BaseScout {
   }
   callGenerateTransferId(chainId: number | string, identifier: number | string): string {
     return this.generateTransferId(chainId, identifier);
-  }
-  callNormalizeAmount(rawAmount: bigint): string {
-    return this.normalizeAmount(rawAmount);
   }
   callGetSizeBucket(amountUsd: number): TransferSizeBucket {
     return this.getSizeBucket(amountUsd);
@@ -87,15 +84,18 @@ class StubScout extends BaseScout {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function buildEvent(status: TransferEvent['status']): TransferEvent {
+function buildEvent(type: TransferEvent['type']): TransferEvent {
   return {
+    type,
     transferId: '1_12345',
     bridge: 'across',
     sourceChain: 'ethereum',
     destChain: 'arbitrum',
-    asset: 'USDC',
-    amount: '10000000000',
-    status,
+    tokenAddress: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',
+    amount: 10000000000n,
+    timestamp: new Date('2026-01-01T00:00:00Z'),
+    txHash: '0xabc',
+    blockNumber: 20000000n,
   };
 }
 
@@ -174,51 +174,39 @@ describe('constructor', () => {
 // ---------------------------------------------------------------------------
 
 describe('emit', () => {
-  it("routes status 'pending' to the transfer:initiated channel", async () => {
+  it("routes type 'initiation' to the transfer:initiated channel", async () => {
     const scout = new StubScout(['ethereum']);
-    await scout.callEmit(buildEvent('pending'));
+    await scout.callEmit(buildEvent('initiation'));
     expect(mockPublish).toHaveBeenCalledTimes(1);
     expect(mockPublish).toHaveBeenCalledWith(
       REDIS_CHANNELS.TRANSFER_INITIATED,
-      expect.objectContaining({ status: 'pending' }),
+      expect.objectContaining({ type: 'initiation' }),
     );
   });
 
-  it("routes status 'completed' to the transfer:completed channel", async () => {
+  it("routes type 'completion' to the transfer:completed channel", async () => {
     const scout = new StubScout(['ethereum']);
-    await scout.callEmit(buildEvent('completed'));
+    await scout.callEmit(buildEvent('completion'));
     expect(mockPublish).toHaveBeenCalledTimes(1);
     expect(mockPublish).toHaveBeenCalledWith(
       REDIS_CHANNELS.TRANSFER_COMPLETED,
-      expect.objectContaining({ status: 'completed' }),
+      expect.objectContaining({ type: 'completion' }),
     );
-  });
-
-  it("does not publish for 'stuck' (set by the stuck-detector job, not scouts)", async () => {
-    const scout = new StubScout(['ethereum']);
-    await scout.callEmit(buildEvent('stuck'));
-    expect(mockPublish).not.toHaveBeenCalled();
-  });
-
-  it("does not publish for 'failed'", async () => {
-    const scout = new StubScout(['ethereum']);
-    await scout.callEmit(buildEvent('failed'));
-    expect(mockPublish).not.toHaveBeenCalled();
   });
 
   it('passes the full event payload to publish', async () => {
     const scout = new StubScout(['ethereum']);
     const event: TransferEvent = {
+      type: 'initiation',
       transferId: '1_99999',
       bridge: 'across',
       sourceChain: 'ethereum',
       destChain: 'arbitrum',
-      asset: 'USDC',
-      amount: '5000000000',
-      amountUsd: 5000,
-      status: 'pending',
-      txHashSource: '0xabc',
-      blockInitiated: '19000000',
+      tokenAddress: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',
+      amount: 5000000000n,
+      timestamp: new Date('2026-01-01T00:00:00Z'),
+      txHash: '0xabc',
+      blockNumber: 19000000n,
     };
     await scout.callEmit(event);
     expect(mockPublish).toHaveBeenCalledWith(REDIS_CHANNELS.TRANSFER_INITIATED, event);
@@ -227,12 +215,12 @@ describe('emit', () => {
   it('uses the exact channel strings defined in REDIS_CHANNELS', async () => {
     const scout = new StubScout(['ethereum']);
 
-    await scout.callEmit(buildEvent('pending'));
+    await scout.callEmit(buildEvent('initiation'));
     expect(mockPublish.mock.calls[0][0]).toBe('transfer:initiated');
 
     mockPublish.mockClear();
 
-    await scout.callEmit(buildEvent('completed'));
+    await scout.callEmit(buildEvent('completion'));
     expect(mockPublish.mock.calls[0][0]).toBe('transfer:completed');
   });
 });
@@ -286,40 +274,6 @@ describe('generateTransferId', () => {
     expect(scout.callGenerateTransferId(1, 100)).not.toBe(
       scout.callGenerateTransferId(1, 200),
     );
-  });
-});
-
-// ---------------------------------------------------------------------------
-// normalizeAmount()
-// ---------------------------------------------------------------------------
-
-describe('normalizeAmount', () => {
-  const scout = new StubScout(['ethereum']);
-
-  it('returns "0" for zero', () => {
-    expect(scout.callNormalizeAmount(0n)).toBe('0');
-  });
-
-  it('converts 1 USDC raw amount at 6 decimals (1_000_000)', () => {
-    expect(scout.callNormalizeAmount(1_000_000n)).toBe('1000000');
-  });
-
-  it('converts 10 000 USDC raw amount at 6 decimals (10_000_000_000)', () => {
-    expect(scout.callNormalizeAmount(10_000_000_000n)).toBe('10000000000');
-  });
-
-  it('returns a plain decimal string with no scientific notation for large values', () => {
-    const result = scout.callNormalizeAmount(1_000_000_000_000_000_000n); // 1e18
-    expect(result).not.toContain('e');
-    expect(result).toBe('1000000000000000000');
-  });
-
-  it('always returns a string', () => {
-    expect(typeof scout.callNormalizeAmount(42n)).toBe('string');
-  });
-
-  it('preserves all digits without rounding', () => {
-    expect(scout.callNormalizeAmount(123456789012345678n)).toBe('123456789012345678');
   });
 });
 

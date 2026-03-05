@@ -13,6 +13,7 @@
  * hot-reload in development (same reason as db.ts).
  */
 import Redis from 'ioredis';
+import superjson from 'superjson';
 
 import { requireEnv } from './env';
 import type { RedisChannel } from './constants';
@@ -39,16 +40,20 @@ if (process.env.NODE_ENV !== 'production') {
 // ---------------------------------------------------------------------------
 
 /**
- * Publish a JSON-serialisable message to a Redis channel.
+ * Publish a message to a Redis channel.
+ *
+ * Uses superjson for serialisation so bigint and Date values are preserved
+ * correctly across the wire.
  */
 export async function publish(channel: RedisChannel, message: unknown): Promise<void> {
-  await redis.publish(channel, JSON.stringify(message));
+  await redis.publish(channel, superjson.stringify(message));
 }
 
 /**
  * Subscribe to a Redis channel and invoke `handler` for each message.
- * The message payload is automatically JSON-parsed before being passed to
- * the handler.
+ *
+ * Uses superjson for deserialisation so bigint and Date values are restored
+ * to their original types before being passed to the handler.
  */
 export async function subscribe<T = unknown>(
   channel: RedisChannel,
@@ -57,6 +62,6 @@ export async function subscribe<T = unknown>(
   await redisSubscriber.subscribe(channel);
   redisSubscriber.on('message', (receivedChannel: string, raw: string) => {
     if (receivedChannel !== channel) return;
-    handler(JSON.parse(raw) as T);
+    handler(superjson.parse<T>(raw));
   });
 }
