@@ -21,6 +21,7 @@ jest.mock('ioredis', () => {
   }));
 });
 
+import superjson from 'superjson';
 import { redis, redisSubscriber, publish, subscribe } from '../../../src/lib/redis';
 import { REDIS_CHANNELS } from '../../../src/lib/constants';
 
@@ -52,28 +53,48 @@ describe('publish', () => {
     mockPublish.mockClear();
   });
 
-  it('serialises an object payload to JSON and calls redis.publish', async () => {
+  it('serialises an object payload with superjson and calls redis.publish', async () => {
     const payload = { transferId: 'abc123', bridge: 'across' };
     await publish(REDIS_CHANNELS.TRANSFER_INITIATED, payload);
     expect(mockPublish).toHaveBeenCalledWith(
       'transfer:initiated',
-      JSON.stringify(payload),
+      superjson.stringify(payload),
     );
   });
 
-  it('serialises a numeric payload to JSON', async () => {
+  it('serialises a numeric payload with superjson', async () => {
     await publish(REDIS_CHANNELS.POOL_SNAPSHOT, 42);
-    expect(mockPublish).toHaveBeenCalledWith('pool:snapshot', '42');
+    expect(mockPublish).toHaveBeenCalledWith('pool:snapshot', superjson.stringify(42));
   });
 
-  it('serialises a null payload to the string "null"', async () => {
+  it('serialises a null payload with superjson', async () => {
     await publish(REDIS_CHANNELS.TRANSFER_COMPLETED, null);
-    expect(mockPublish).toHaveBeenCalledWith('transfer:completed', 'null');
+    expect(mockPublish).toHaveBeenCalledWith('transfer:completed', superjson.stringify(null));
   });
 
   it('publishes to the exact channel string provided', async () => {
     await publish(REDIS_CHANNELS.TRANSFER_COMPLETED, {});
     expect(mockPublish).toHaveBeenCalledWith('transfer:completed', expect.any(String));
+  });
+
+  it('serialises bigint values correctly (preserves type through superjson)', async () => {
+    const payload = { amount: 10000000000n, blockNumber: 20000000n };
+    await publish(REDIS_CHANNELS.TRANSFER_INITIATED, payload);
+    const raw = mockPublish.mock.calls[0][1] as string;
+    // Round-trip: the serialised string must restore to the original bigint values
+    const restored = superjson.parse<typeof payload>(raw);
+    expect(restored.amount).toBe(10000000000n);
+    expect(restored.blockNumber).toBe(20000000n);
+  });
+
+  it('serialises Date values correctly (preserves type through superjson)', async () => {
+    const ts = new Date('2026-01-01T00:00:00Z');
+    const payload = { timestamp: ts };
+    await publish(REDIS_CHANNELS.TRANSFER_INITIATED, payload);
+    const raw = mockPublish.mock.calls[0][1] as string;
+    const restored = superjson.parse<typeof payload>(raw);
+    expect(restored.timestamp).toEqual(ts);
+    expect(restored.timestamp).toBeInstanceOf(Date);
   });
 });
 
@@ -104,13 +125,13 @@ describe('subscribe', () => {
     expect(mockOn).toHaveBeenCalledWith('message', expect.any(Function));
   });
 
-  it('calls the handler with the JSON-parsed message on the correct channel', async () => {
+  it('calls the handler with the superjson-parsed message on the correct channel', async () => {
     const handler = jest.fn();
     await subscribe(REDIS_CHANNELS.TRANSFER_INITIATED, handler);
 
     const messageHandler = getMessageHandler();
-    const payload = { transferId: 'xyz', status: 'pending' };
-    messageHandler('transfer:initiated', JSON.stringify(payload));
+    const payload = { transferId: 'xyz', type: 'initiation' };
+    messageHandler('transfer:initiated', superjson.stringify(payload));
 
     expect(handler).toHaveBeenCalledTimes(1);
     expect(handler).toHaveBeenCalledWith(payload);
@@ -121,19 +142,33 @@ describe('subscribe', () => {
     await subscribe(REDIS_CHANNELS.TRANSFER_INITIATED, handler);
 
     const messageHandler = getMessageHandler();
-    messageHandler('transfer:completed', JSON.stringify({ transferId: 'xyz' }));
+    messageHandler('transfer:completed', superjson.stringify({ transferId: 'xyz' }));
 
     expect(handler).not.toHaveBeenCalled();
   });
 
-  it('parses nested JSON structures correctly', async () => {
+  it('parses nested structures correctly', async () => {
     const handler = jest.fn();
     await subscribe(REDIS_CHANNELS.POOL_SNAPSHOT, handler);
 
     const messageHandler = getMessageHandler();
     const payload = { poolId: 'across_eth_usdc', tvl: 1_000_000, assets: ['USDC'] };
-    messageHandler('pool:snapshot', JSON.stringify(payload));
+    messageHandler('pool:snapshot', superjson.stringify(payload));
 
     expect(handler).toHaveBeenCalledWith(payload);
+  });
+
+  it('restores bigint and Date values in the handler', async () => {
+    const handler = jest.fn();
+    await subscribe(REDIS_CHANNELS.TRANSFER_INITIATED, handler);
+
+    const messageHandler = getMessageHandler();
+    const payload = { amount: 10000000000n, timestamp: new Date('2026-01-01T00:00:00Z') };
+    messageHandler('transfer:initiated', superjson.stringify(payload));
+
+    const received = handler.mock.calls[0][0];
+    expect(received.amount).toBe(10000000000n);
+    expect(received.timestamp).toEqual(new Date('2026-01-01T00:00:00Z'));
+    expect(received.timestamp).toBeInstanceOf(Date);
   });
 });

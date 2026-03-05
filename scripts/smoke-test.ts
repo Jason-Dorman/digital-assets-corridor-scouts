@@ -83,6 +83,78 @@ async function checkRpc(): Promise<CheckResult> {
   }
 }
 
+async function checkTokenRegistry(): Promise<CheckResult> {
+  const { Contract } = await import('ethers');
+  const { getProvider } = await import('../src/lib/rpc');
+  const { TOKEN_REGISTRY } = await import('../src/lib/token-registry');
+  const { CHAIN_IDS } = await import('../src/lib/constants');
+
+  // Reverse map: chainId → ChainName, built from CHAIN_IDS
+  const chainIdToName = new Map(
+    Object.entries(CHAIN_IDS).map(([name, id]) => [id as number, name as keyof typeof CHAIN_IDS]),
+  );
+
+  // Minimal ERC-20 ABI — only the two fields we want to verify
+  const ERC20_ABI = [
+    'function symbol() view returns (string)',
+    'function decimals() view returns (uint8)',
+  ];
+
+  const mismatches: string[] = [];
+  let checked = 0;
+
+  // Check every entry in the registry in parallel per chain
+  const checks = Object.entries(TOKEN_REGISTRY).flatMap(([chainIdStr, tokens]) => {
+    const chainId = Number(chainIdStr);
+    const chainName = chainIdToName.get(chainId);
+    if (!chainName) return [];
+
+    return Object.entries(tokens).map(async ([address, expected]) => {
+      try {
+        const provider = getProvider(chainName);
+        const contract = new Contract(address, ERC20_ABI, provider);
+        const [onChainSymbol, onChainDecimals] = await Promise.all([
+          contract.symbol() as Promise<string>,
+          contract.decimals() as Promise<bigint>,
+        ]);
+
+        checked++;
+
+        // Compare against rawSymbol when defined, otherwise canonical symbol
+        const expectedOnChain = expected.rawSymbol ?? expected.symbol;
+        if (onChainSymbol !== expectedOnChain) {
+          mismatches.push(
+            `chain ${chainId} ${address}: symbol expected ${expectedOnChain}, got ${onChainSymbol}`,
+          );
+        }
+        if (Number(onChainDecimals) !== expected.decimals) {
+          mismatches.push(
+            `chain ${chainId} ${address}: decimals expected ${expected.decimals}, got ${onChainDecimals}`,
+          );
+        }
+      } catch (error) {
+        mismatches.push(`chain ${chainId} ${address}: RPC error — ${String(error)}`);
+      }
+    });
+  });
+
+  await Promise.all(checks);
+
+  if (mismatches.length > 0) {
+    return {
+      name: 'token registry',
+      ok: false,
+      detail: `${mismatches.length} mismatch(es):\n    ${mismatches.join('\n    ')}`,
+    };
+  }
+
+  return {
+    name: 'token registry',
+    ok: true,
+    detail: `${checked} addresses verified on-chain`,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Cleanup
 // ---------------------------------------------------------------------------
@@ -112,7 +184,7 @@ const RESET = '\x1b[0m';
 async function main(): Promise<void> {
   console.log(`\n${DIM}Corridor Scout — Smoke Test${RESET}\n`);
 
-  const checks = [checkEnv, checkDatabase, checkRedis, checkRpc];
+  const checks = [checkEnv, checkDatabase, checkRedis, checkRpc, checkTokenRegistry];
   const results: CheckResult[] = [];
 
   for (const check of checks) {

@@ -5,13 +5,11 @@
  * on the Across SpokePool contract across Ethereum, Arbitrum, Optimism, and Base.
  *
  * Design decisions:
- *   - asset: raw inputToken address (lowercase). Symbol resolution is the
+ *   - tokenAddress: raw inputToken address (lowercase). Symbol resolution is the
  *     transfer processor's responsibility (docs/DATA-MODEL.md §13.1).
- *   - amountUsd: undefined — no price feed at scout level.
- *   - gasPriceGwei: undefined — skipping per-event receipt fetch.
- *   - initiatedAt / completedAt: derived from block.timestamp via an async
- *     block fetch inside the event listener, then injected before emit.
- *     Keeps parseDepositEvent / parseFillEvent synchronous per BaseScout contract.
+ *   - amount: bigint directly from event args. Processor normalises for storage.
+ *   - timestamp: derived from block.timestamp in the async listener and passed
+ *     into parseDepositEvent / parseFillEvent, keeping the parsers synchronous.
  *   - Unknown chains in event args: logged and skipped rather than errored.
  */
 
@@ -105,20 +103,19 @@ export class AcrossScout extends BaseScout {
       // Each listener receives decoded event args + ContractEventPayload as the
       // final argument. We access payload.log for the raw Log data needed by
       // our parse methods, and fetch the block timestamp asynchronously here
-      // so the synchronous parsers remain focused on decoding.
+      // before calling the synchronous parser.
 
       const depositListener = async (...args: unknown[]): Promise<void> => {
         const payload = args[args.length - 1] as { log: Log };
         const log = payload.log;
         try {
           const block = await provider.getBlock(log.blockNumber);
-          const initiatedAt = block !== null
-            ? new Date(block.timestamp * 1000).toISOString()
-            : new Date().toISOString();
+          const timestamp = block !== null
+            ? new Date(block.timestamp * 1000)
+            : new Date();
 
-          const event = this.parseDepositEvent(log, chainId);
+          const event = this.parseDepositEvent(log, chainId, timestamp);
           if (event !== null) {
-            event.initiatedAt = initiatedAt;
             await this.emit(event);
           }
         } catch (error) {
@@ -136,13 +133,12 @@ export class AcrossScout extends BaseScout {
         const log = payload.log;
         try {
           const block = await provider.getBlock(log.blockNumber);
-          const completedAt = block !== null
-            ? new Date(block.timestamp * 1000).toISOString()
-            : new Date().toISOString();
+          const timestamp = block !== null
+            ? new Date(block.timestamp * 1000)
+            : new Date();
 
-          const event = this.parseFillEvent(log, chainId);
+          const event = this.parseFillEvent(log, chainId, timestamp);
           if (event !== null) {
-            event.completedAt = completedAt;
             await this.emit(event);
           }
         } catch (error) {
@@ -180,15 +176,13 @@ export class AcrossScout extends BaseScout {
   // ---------------------------------------------------------------------------
 
   /**
-   * Decode a V3FundsDeposited log into a pending TransferEvent.
+   * Decode a V3FundsDeposited log into an initiation TransferEvent.
    *
-   * chainId — numeric ID of the chain where this event was observed (source chain).
+   * chainId    — numeric ID of the chain where this event was observed (source chain).
+   * timestamp  — block.timestamp for this log, fetched by the async listener.
    * Returns null if decoding fails or the destination chain is not in CHAIN_IDS.
-   *
-   * Note: initiatedAt is NOT set here — the async listener injects it from
-   * block.timestamp after calling this method.
    */
-  parseDepositEvent(log: Log, chainId: number): TransferEvent | null {
+  parseDepositEvent(log: Log, chainId: number, timestamp: Date): TransferEvent | null {
     try {
       const decoded = SPOKE_POOL_IFACE.parseLog({
         topics: log.topics as string[],
@@ -224,6 +218,7 @@ export class AcrossScout extends BaseScout {
       }
 
       return {
+        type: 'initiation',
         // DATA-MODEL.md §13.1: Across transfer ID = {originChainId}_{depositId}
         // For deposits, the listening chain IS the origin chain.
         transferId: this.generateTransferId(chainId, Number(depositId)),
@@ -231,11 +226,11 @@ export class AcrossScout extends BaseScout {
         sourceChain,
         destChain,
         // Raw address — symbol resolution is the processor's responsibility.
-        asset: inputToken.toLowerCase(),
-        amount: this.normalizeAmount(inputAmount),
-        status: 'pending',
-        txHashSource: log.transactionHash,
-        blockInitiated: log.blockNumber.toString(),
+        tokenAddress: inputToken.toLowerCase(),
+        amount: inputAmount,
+        timestamp,
+        txHash: log.transactionHash,
+        blockNumber: BigInt(log.blockNumber),
       };
     } catch (error) {
       console.error('[AcrossScout] Failed to decode V3FundsDeposited log', {
@@ -247,15 +242,13 @@ export class AcrossScout extends BaseScout {
   }
 
   /**
-   * Decode a FilledV3Relay log into a completed TransferEvent.
+   * Decode a FilledV3Relay log into a completion TransferEvent.
    *
-   * chainId — numeric ID of the chain where this event was observed (dest chain).
+   * chainId    — numeric ID of the chain where this event was observed (dest chain).
+   * timestamp  — block.timestamp for this log, fetched by the async listener.
    * Returns null if decoding fails or the origin chain is not in CHAIN_IDS.
-   *
-   * Note: completedAt is NOT set here — the async listener injects it from
-   * block.timestamp after calling this method.
    */
-  parseFillEvent(log: Log, chainId: number): TransferEvent | null {
+  parseFillEvent(log: Log, chainId: number, timestamp: Date): TransferEvent | null {
     try {
       const decoded = SPOKE_POOL_IFACE.parseLog({
         topics: log.topics as string[],
@@ -290,6 +283,7 @@ export class AcrossScout extends BaseScout {
       if (destChain === undefined) return null;
 
       return {
+        type: 'completion',
         // DATA-MODEL.md §13.1: Across transfer ID = {originChainId}_{depositId}
         // originChainId comes from the event args — the chain where the deposit
         // was made, not the chain we are currently listening on.
@@ -298,11 +292,11 @@ export class AcrossScout extends BaseScout {
         sourceChain,
         destChain,
         // Raw address — symbol resolution is the processor's responsibility.
-        asset: inputToken.toLowerCase(),
-        amount: this.normalizeAmount(inputAmount),
-        status: 'completed',
-        txHashDest: log.transactionHash,
-        blockCompleted: log.blockNumber.toString(),
+        tokenAddress: inputToken.toLowerCase(),
+        amount: inputAmount,
+        timestamp,
+        txHash: log.transactionHash,
+        blockNumber: BigInt(log.blockNumber),
       };
     } catch (error) {
       console.error('[AcrossScout] Failed to decode FilledV3Relay log', {

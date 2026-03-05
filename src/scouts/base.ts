@@ -5,10 +5,14 @@
  * and emit TransferEvent payloads to Redis for downstream processing.
  *
  * Subclasses must implement:
- *   - start() / stop()           — lifecycle management
- *   - getContractAddress(chain)          — contract address for a given chain
- *   - parseDepositEvent(log, chainId)   — convert a deposit log to a TransferEvent
- *   - parseFillEvent(log, chainId)      — convert a fill/completion log to a TransferEvent
+ *   - start() / stop()                          — lifecycle management
+ *   - getContractAddress(chain)                 — contract address for a given chain
+ *   - parseDepositEvent(log, chainId, timestamp) — convert a deposit log to a TransferEvent
+ *   - parseFillEvent(log, chainId, timestamp)    — convert a fill/completion log to a TransferEvent
+ *
+ * The timestamp parameter is provided by the async listener after fetching
+ * block.timestamp, keeping the parsers themselves synchronous and focused
+ * purely on log decoding.
  *
  * Subclasses should use eventListeners to register cleanup functions so that
  * stop() can remove all contract listeners without needing to track them
@@ -59,16 +63,16 @@ export abstract class BaseScout {
   /**
    * Parse a deposit/initiation log into a TransferEvent.
    * Returns null if the log cannot be decoded (e.g. unrelated event on the same contract).
-   * The returned event must have status: 'pending'.
+   * The timestamp is fetched from block.timestamp by the async listener and passed in.
    */
-  abstract parseDepositEvent(log: Log, chainId: number): TransferEvent | null;
+  abstract parseDepositEvent(log: Log, chainId: number, timestamp: Date): TransferEvent | null;
 
   /**
    * Parse a fill/completion log into a TransferEvent.
    * Returns null if the log cannot be decoded.
-   * The returned event must have status: 'completed'.
+   * The timestamp is fetched from block.timestamp by the async listener and passed in.
    */
-  abstract parseFillEvent(log: Log, chainId: number): TransferEvent | null;
+  abstract parseFillEvent(log: Log, chainId: number, timestamp: Date): TransferEvent | null;
 
   // ---------------------------------------------------------------------------
   // Protected helpers — shared across all scouts
@@ -78,16 +82,13 @@ export abstract class BaseScout {
    * Publish a TransferEvent to the appropriate Redis channel.
    *
    * Routing:
-   *   status 'pending'   → transfer:initiated
-   *   status 'completed' → transfer:completed
-   *
-   * Events with other statuses (stuck, failed) are set by downstream jobs,
-   * not scouts, so they are silently ignored here.
+   *   type 'initiation' → transfer:initiated
+   *   type 'completion' → transfer:completed
    */
   protected async emit(event: TransferEvent): Promise<void> {
-    if (event.status === 'pending') {
+    if (event.type === 'initiation') {
       await publish(REDIS_CHANNELS.TRANSFER_INITIATED, event);
-    } else if (event.status === 'completed') {
+    } else if (event.type === 'completion') {
       await publish(REDIS_CHANNELS.TRANSFER_COMPLETED, event);
     }
   }
@@ -105,18 +106,6 @@ export abstract class BaseScout {
     identifier: number | string,
   ): string {
     return `${chainId}_${identifier}`;
-  }
-
-  /**
-   * Convert a raw on-chain uint256 amount to its decimal string representation.
-   *
-   * The TransferEvent.amount field stores the raw token amount as a decimal
-   * string (e.g. "10000000000" for 10 000 USDC at 6 decimals). USD conversion
-   * and decimal scaling are handled in the transfer processor where token
-   * metadata is available.
-   */
-  protected normalizeAmount(rawAmount: bigint): string {
-    return rawAmount.toString();
   }
 
   /**

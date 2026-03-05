@@ -6,7 +6,7 @@
  *     logs produced by ethers Interface.encodeEventLog(). No mocks required for parsing.
  *   - start() / stop() lifecycle tests verify listener registration via a mocked
  *     ethers.Contract. Listener callbacks are then invoked directly to test the
- *     block-fetch → timestamp-inject → emit pipeline.
+ *     block-fetch → timestamp → emit pipeline.
  *   - lib/redis and lib/rpc are fully mocked — no real connections are made.
  */
 
@@ -72,6 +72,9 @@ const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
 const DEPOSIT_ID    = 12345;
 const INPUT_AMOUNT  = BigInt('10000000000'); // 10 000 USDC at 6 decimals
 const OUTPUT_AMOUNT = BigInt('9995000000');  // ~10 000 USDC after fees
+
+const TEST_TIMESTAMP = new Date('2026-01-01T00:00:00Z');
+const BLOCK_TIMESTAMP_SECONDS = Math.floor(TEST_TIMESTAMP.getTime() / 1000);
 
 // Mirror the exact ABI strings from across.ts so we can encode test logs with
 // the same interface the scout uses to decode them.
@@ -274,18 +277,18 @@ describe('parseDepositEvent', () => {
 
   describe('happy path — ETH → ARB deposit', () => {
     const log = encodeDepositLog();
-    const result = scout.parseDepositEvent(log, CHAIN_IDS.ethereum);
+    const result = scout.parseDepositEvent(log, CHAIN_IDS.ethereum, TEST_TIMESTAMP);
 
     it('returns a non-null TransferEvent', () => {
       expect(result).not.toBeNull();
     });
 
-    it('bridge is "across"', () => {
-      expect(result!.bridge).toBe('across');
+    it('type is "initiation"', () => {
+      expect(result!.type).toBe('initiation');
     });
 
-    it('status is "pending"', () => {
-      expect(result!.status).toBe('pending');
+    it('bridge is "across"', () => {
+      expect(result!.bridge).toBe('across');
     });
 
     it('sourceChain matches the chainId parameter', () => {
@@ -300,59 +303,43 @@ describe('parseDepositEvent', () => {
       expect(result!.transferId).toBe(`${CHAIN_IDS.ethereum}_${DEPOSIT_ID}`);
     });
 
-    it('asset is the raw inputToken address in lowercase', () => {
-      expect(result!.asset).toBe(USDC_ETH.toLowerCase());
+    it('tokenAddress is the raw inputToken address in lowercase', () => {
+      expect(result!.tokenAddress).toBe(USDC_ETH.toLowerCase());
     });
 
-    it('amount is the raw on-chain inputAmount as a decimal string', () => {
-      expect(result!.amount).toBe(INPUT_AMOUNT.toString());
+    it('amount is the raw on-chain inputAmount as a bigint', () => {
+      expect(result!.amount).toBe(INPUT_AMOUNT);
     });
 
-    it('txHashSource is taken from the log', () => {
-      expect(result!.txHashSource).toBe(log.transactionHash);
+    it('timestamp is the Date passed in from block.timestamp', () => {
+      expect(result!.timestamp).toEqual(TEST_TIMESTAMP);
     });
 
-    it('blockInitiated is the log blockNumber as a string', () => {
-      expect(result!.blockInitiated).toBe(log.blockNumber.toString());
+    it('txHash is taken from the log', () => {
+      expect(result!.txHash).toBe(log.transactionHash);
     });
 
-    it('initiatedAt is undefined — set by the async listener, not the parser', () => {
-      expect(result!.initiatedAt).toBeUndefined();
-    });
-
-    it('amountUsd is undefined — no price feed at scout level', () => {
-      expect(result!.amountUsd).toBeUndefined();
-    });
-
-    it('gasPriceGwei is undefined — no receipt fetch at scout level', () => {
-      expect(result!.gasPriceGwei).toBeUndefined();
-    });
-
-    it('txHashDest is undefined for a deposit event', () => {
-      expect(result!.txHashDest).toBeUndefined();
-    });
-
-    it('blockCompleted is undefined for a deposit event', () => {
-      expect(result!.blockCompleted).toBeUndefined();
+    it('blockNumber is the log blockNumber as a bigint', () => {
+      expect(result!.blockNumber).toBe(BigInt(log.blockNumber));
     });
   });
 
   describe('happy path — different chains', () => {
     it('sourceChain reflects the chainId param (optimism)', () => {
       const log = encodeDepositLog({ destinationChainId: BigInt(CHAIN_IDS.base) });
-      const result = scout.parseDepositEvent(log, CHAIN_IDS.optimism);
+      const result = scout.parseDepositEvent(log, CHAIN_IDS.optimism, TEST_TIMESTAMP);
       expect(result!.sourceChain).toBe('optimism');
     });
 
     it('destChain reflects destinationChainId in the event (base)', () => {
       const log = encodeDepositLog({ destinationChainId: BigInt(CHAIN_IDS.base) });
-      const result = scout.parseDepositEvent(log, CHAIN_IDS.ethereum);
+      const result = scout.parseDepositEvent(log, CHAIN_IDS.ethereum, TEST_TIMESTAMP);
       expect(result!.destChain).toBe('base');
     });
 
     it('produces a unique transferId for a different depositId', () => {
       const log = encodeDepositLog({ depositId: 99999 });
-      const result = scout.parseDepositEvent(log, CHAIN_IDS.ethereum);
+      const result = scout.parseDepositEvent(log, CHAIN_IDS.ethereum, TEST_TIMESTAMP);
       expect(result!.transferId).toBe(`${CHAIN_IDS.ethereum}_99999`);
     });
   });
@@ -360,12 +347,12 @@ describe('parseDepositEvent', () => {
   describe('null cases', () => {
     it('returns null when destinationChainId is not a recognised chain', () => {
       const log = encodeDepositLog({ destinationChainId: BigInt(99999) });
-      expect(scout.parseDepositEvent(log, CHAIN_IDS.ethereum)).toBeNull();
+      expect(scout.parseDepositEvent(log, CHAIN_IDS.ethereum, TEST_TIMESTAMP)).toBeNull();
     });
 
     it('returns null when passed a FilledV3Relay log (wrong event name)', () => {
       const fillLog = encodeFillLog();
-      expect(scout.parseDepositEvent(fillLog, CHAIN_IDS.arbitrum)).toBeNull();
+      expect(scout.parseDepositEvent(fillLog, CHAIN_IDS.arbitrum, TEST_TIMESTAMP)).toBeNull();
     });
 
     it('returns null for a completely malformed log (empty topics and data)', () => {
@@ -380,7 +367,7 @@ describe('parseDepositEvent', () => {
         topics: [],
         data: '0x',
       } as unknown as Log;
-      expect(scout.parseDepositEvent(badLog, CHAIN_IDS.ethereum)).toBeNull();
+      expect(scout.parseDepositEvent(badLog, CHAIN_IDS.ethereum, TEST_TIMESTAMP)).toBeNull();
     });
   });
 });
@@ -396,18 +383,18 @@ describe('parseFillEvent', () => {
     // chainId = 42161 (Arbitrum, where we're listening)
     // originChainId = 1 (Ethereum, where the deposit happened)
     const log = encodeFillLog();
-    const result = scout.parseFillEvent(log, CHAIN_IDS.arbitrum);
+    const result = scout.parseFillEvent(log, CHAIN_IDS.arbitrum, TEST_TIMESTAMP);
 
     it('returns a non-null TransferEvent', () => {
       expect(result).not.toBeNull();
     });
 
-    it('bridge is "across"', () => {
-      expect(result!.bridge).toBe('across');
+    it('type is "completion"', () => {
+      expect(result!.type).toBe('completion');
     });
 
-    it('status is "completed"', () => {
-      expect(result!.status).toBe('completed');
+    it('bridge is "across"', () => {
+      expect(result!.bridge).toBe('across');
     });
 
     it('sourceChain comes from originChainId in the event args (not from chainId param)', () => {
@@ -424,48 +411,36 @@ describe('parseFillEvent', () => {
       expect(result!.transferId).toBe(`${CHAIN_IDS.ethereum}_${DEPOSIT_ID}`);
     });
 
-    it('asset is the raw inputToken address in lowercase', () => {
-      expect(result!.asset).toBe(USDC_ETH.toLowerCase());
+    it('tokenAddress is the raw inputToken address in lowercase', () => {
+      expect(result!.tokenAddress).toBe(USDC_ETH.toLowerCase());
     });
 
-    it('amount is the raw on-chain inputAmount as a decimal string', () => {
-      expect(result!.amount).toBe(INPUT_AMOUNT.toString());
+    it('amount is the raw on-chain inputAmount as a bigint', () => {
+      expect(result!.amount).toBe(INPUT_AMOUNT);
     });
 
-    it('txHashDest is taken from the log', () => {
-      expect(result!.txHashDest).toBe(log.transactionHash);
+    it('timestamp is the Date passed in from block.timestamp', () => {
+      expect(result!.timestamp).toEqual(TEST_TIMESTAMP);
     });
 
-    it('blockCompleted is the log blockNumber as a string', () => {
-      expect(result!.blockCompleted).toBe(log.blockNumber.toString());
+    it('txHash is taken from the log', () => {
+      expect(result!.txHash).toBe(log.transactionHash);
     });
 
-    it('completedAt is undefined — set by the async listener, not the parser', () => {
-      expect(result!.completedAt).toBeUndefined();
-    });
-
-    it('amountUsd is undefined — no price feed at scout level', () => {
-      expect(result!.amountUsd).toBeUndefined();
-    });
-
-    it('txHashSource is undefined for a fill event', () => {
-      expect(result!.txHashSource).toBeUndefined();
-    });
-
-    it('blockInitiated is undefined for a fill event', () => {
-      expect(result!.blockInitiated).toBeUndefined();
+    it('blockNumber is the log blockNumber as a bigint', () => {
+      expect(result!.blockNumber).toBe(BigInt(log.blockNumber));
     });
   });
 
   describe('null cases', () => {
     it('returns null when originChainId is not a recognised chain', () => {
       const log = encodeFillLog({ originChainId: BigInt(99999) });
-      expect(scout.parseFillEvent(log, CHAIN_IDS.arbitrum)).toBeNull();
+      expect(scout.parseFillEvent(log, CHAIN_IDS.arbitrum, TEST_TIMESTAMP)).toBeNull();
     });
 
     it('returns null when passed a V3FundsDeposited log (wrong event name)', () => {
       const depositLog = encodeDepositLog();
-      expect(scout.parseFillEvent(depositLog, CHAIN_IDS.ethereum)).toBeNull();
+      expect(scout.parseFillEvent(depositLog, CHAIN_IDS.ethereum, TEST_TIMESTAMP)).toBeNull();
     });
 
     it('returns null for a completely malformed log', () => {
@@ -480,7 +455,7 @@ describe('parseFillEvent', () => {
         topics: [],
         data: '0x',
       } as unknown as Log;
-      expect(scout.parseFillEvent(badLog, CHAIN_IDS.arbitrum)).toBeNull();
+      expect(scout.parseFillEvent(badLog, CHAIN_IDS.arbitrum, TEST_TIMESTAMP)).toBeNull();
     });
   });
 });
@@ -493,19 +468,17 @@ describe('transferId consistency', () => {
   const scout = new AcrossScout();
 
   it('deposit on Ethereum and fill on Arbitrum produce the same transferId', () => {
-    // Deposit observed on Ethereum (source chain, chainId=1)
     const depositLog = encodeDepositLog({
       destinationChainId: BigInt(CHAIN_IDS.arbitrum),
       depositId: DEPOSIT_ID,
     });
-    const deposit = scout.parseDepositEvent(depositLog, CHAIN_IDS.ethereum);
+    const deposit = scout.parseDepositEvent(depositLog, CHAIN_IDS.ethereum, TEST_TIMESTAMP);
 
-    // Fill observed on Arbitrum (dest chain, chainId=42161), originChainId=1
     const fillLog = encodeFillLog({
       originChainId: BigInt(CHAIN_IDS.ethereum),
       depositId: DEPOSIT_ID,
     });
-    const fill = scout.parseFillEvent(fillLog, CHAIN_IDS.arbitrum);
+    const fill = scout.parseFillEvent(fillLog, CHAIN_IDS.arbitrum, TEST_TIMESTAMP);
 
     expect(deposit!.transferId).toBe(fill!.transferId);
   });
@@ -517,8 +490,8 @@ describe('transferId consistency', () => {
       depositId: DEPOSIT_ID,
     });
 
-    const deposit = scout.parseDepositEvent(depositLog, CHAIN_IDS.ethereum);
-    const fill = scout.parseFillEvent(fillLog, CHAIN_IDS.arbitrum);
+    const deposit = scout.parseDepositEvent(depositLog, CHAIN_IDS.ethereum, TEST_TIMESTAMP);
+    const fill = scout.parseFillEvent(fillLog, CHAIN_IDS.arbitrum, TEST_TIMESTAMP);
 
     expect(deposit!.transferId).toBe('1_12345');
     expect(fill!.transferId).toBe('1_12345');
@@ -529,9 +502,9 @@ describe('transferId consistency', () => {
     const log1 = encodeDepositLog({ depositId: 100 });
     const log2 = encodeDepositLog({ depositId: 200 });
     expect(
-      scout2.parseDepositEvent(log1, CHAIN_IDS.ethereum)!.transferId,
+      scout2.parseDepositEvent(log1, CHAIN_IDS.ethereum, TEST_TIMESTAMP)!.transferId,
     ).not.toBe(
-      scout2.parseDepositEvent(log2, CHAIN_IDS.ethereum)!.transferId,
+      scout2.parseDepositEvent(log2, CHAIN_IDS.ethereum, TEST_TIMESTAMP)!.transferId,
     );
   });
 });
@@ -611,7 +584,6 @@ describe('stop', () => {
   });
 
   it('passes the same listener reference to off() that was passed to on()', () => {
-    // For each on() call there must be a matching off() call with the same listener fn.
     for (const [eventName, onListener] of mockContractOn.mock.calls) {
       const matchingOff = mockContractOff.mock.calls.find(
         ([offEventName, offListener]) =>
@@ -635,7 +607,7 @@ describe('deposit listener', () => {
   });
 
   it('emits to transfer:initiated channel when a valid deposit is observed', async () => {
-    mockGetBlock.mockResolvedValue({ timestamp: 1_700_000_000 });
+    mockGetBlock.mockResolvedValue({ timestamp: BLOCK_TIMESTAMP_SECONDS });
     const log = encodeDepositLog();
 
     await invokeListener('V3FundsDeposited', log);
@@ -643,33 +615,31 @@ describe('deposit listener', () => {
     expect(mockPublish).toHaveBeenCalledTimes(1);
     expect(mockPublish).toHaveBeenCalledWith(
       REDIS_CHANNELS.TRANSFER_INITIATED,
-      expect.objectContaining({ bridge: 'across', status: 'pending' }),
+      expect.objectContaining({ bridge: 'across', type: 'initiation' }),
     );
   });
 
-  it('injects initiatedAt from block.timestamp as an ISO 8601 string', async () => {
-    const blockTimestamp = 1_700_000_000;
-    mockGetBlock.mockResolvedValue({ timestamp: blockTimestamp });
+  it('sets timestamp from block.timestamp as a Date', async () => {
+    mockGetBlock.mockResolvedValue({ timestamp: BLOCK_TIMESTAMP_SECONDS });
     const log = encodeDepositLog();
 
     await invokeListener('V3FundsDeposited', log);
 
     const emittedEvent = mockPublish.mock.calls[0][1];
-    expect(emittedEvent.initiatedAt).toBe(new Date(blockTimestamp * 1000).toISOString());
+    expect(emittedEvent.timestamp).toEqual(new Date(BLOCK_TIMESTAMP_SECONDS * 1000));
   });
 
   it('falls back to approximate current time when getBlock returns null', async () => {
     mockGetBlock.mockResolvedValue(null);
-    const before = new Date().toISOString();
+    const before = new Date();
     const log = encodeDepositLog();
 
     await invokeListener('V3FundsDeposited', log);
 
-    const after = new Date().toISOString();
-    const emittedAt = mockPublish.mock.calls[0][1].initiatedAt as string;
-    // The fallback timestamp must be between the before/after snapshots.
-    expect(emittedAt >= before).toBe(true);
-    expect(emittedAt <= after).toBe(true);
+    const after = new Date();
+    const emittedTimestamp: Date = mockPublish.mock.calls[0][1].timestamp;
+    expect(emittedTimestamp.getTime()).toBeGreaterThanOrEqual(before.getTime());
+    expect(emittedTimestamp.getTime()).toBeLessThanOrEqual(after.getTime());
   });
 
   it('does NOT emit when getBlock throws (logs error, swallows exception)', async () => {
@@ -697,7 +667,7 @@ describe('fill listener', () => {
   });
 
   it('emits to transfer:completed channel when a valid fill is observed', async () => {
-    mockGetBlock.mockResolvedValue({ timestamp: 1_700_003_600 });
+    mockGetBlock.mockResolvedValue({ timestamp: BLOCK_TIMESTAMP_SECONDS });
     const log = encodeFillLog();
 
     await invokeListener('FilledV3Relay', log);
@@ -705,32 +675,31 @@ describe('fill listener', () => {
     expect(mockPublish).toHaveBeenCalledTimes(1);
     expect(mockPublish).toHaveBeenCalledWith(
       REDIS_CHANNELS.TRANSFER_COMPLETED,
-      expect.objectContaining({ bridge: 'across', status: 'completed' }),
+      expect.objectContaining({ bridge: 'across', type: 'completion' }),
     );
   });
 
-  it('injects completedAt from block.timestamp as an ISO 8601 string', async () => {
-    const blockTimestamp = 1_700_003_600;
-    mockGetBlock.mockResolvedValue({ timestamp: blockTimestamp });
+  it('sets timestamp from block.timestamp as a Date', async () => {
+    mockGetBlock.mockResolvedValue({ timestamp: BLOCK_TIMESTAMP_SECONDS });
     const log = encodeFillLog();
 
     await invokeListener('FilledV3Relay', log);
 
     const emittedEvent = mockPublish.mock.calls[0][1];
-    expect(emittedEvent.completedAt).toBe(new Date(blockTimestamp * 1000).toISOString());
+    expect(emittedEvent.timestamp).toEqual(new Date(BLOCK_TIMESTAMP_SECONDS * 1000));
   });
 
   it('falls back to approximate current time when getBlock returns null', async () => {
     mockGetBlock.mockResolvedValue(null);
-    const before = new Date().toISOString();
+    const before = new Date();
     const log = encodeFillLog();
 
     await invokeListener('FilledV3Relay', log);
 
-    const after = new Date().toISOString();
-    const emittedAt = mockPublish.mock.calls[0][1].completedAt as string;
-    expect(emittedAt >= before).toBe(true);
-    expect(emittedAt <= after).toBe(true);
+    const after = new Date();
+    const emittedTimestamp: Date = mockPublish.mock.calls[0][1].timestamp;
+    expect(emittedTimestamp.getTime()).toBeGreaterThanOrEqual(before.getTime());
+    expect(emittedTimestamp.getTime()).toBeLessThanOrEqual(after.getTime());
   });
 
   it('does NOT emit when getBlock throws', async () => {

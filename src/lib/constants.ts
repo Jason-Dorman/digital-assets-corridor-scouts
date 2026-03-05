@@ -182,3 +182,28 @@ export const REDIS_CHANNELS = {
 } as const;
 
 export type RedisChannel = (typeof REDIS_CHANNELS)[keyof typeof REDIS_CHANNELS];
+
+// ---------------------------------------------------------------------------
+// Transfer Size Bucket Classification (docs/DATA-MODEL.md §3.1)
+// ---------------------------------------------------------------------------
+
+/**
+ * Classify a USD transfer amount into a size bucket.
+ *
+ * Exported as a standalone function so it can be used by any layer
+ * (scouts, processors, calculators) without going through an instance.
+ *
+ * Thresholds from DATA-MODEL.md §3.2:
+ *   small  : < $10,000
+ *   medium : $10,000 – $99,999
+ *   large  : $100,000 – $999,999
+ *   whale  : ≥ $1,000,000
+ */
+export function getSizeBucket(
+  amountUsd: number,
+): 'small' | 'medium' | 'large' | 'whale' {
+  if (amountUsd < SIZE_BUCKET_THRESHOLDS.small) return 'small';
+  if (amountUsd < SIZE_BUCKET_THRESHOLDS.medium) return 'medium';
+  if (amountUsd < SIZE_BUCKET_THRESHOLDS.large) return 'large';
+  return 'whale';
+}

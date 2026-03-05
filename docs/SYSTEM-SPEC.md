@@ -324,11 +324,10 @@ classDiagram
         +start()* Promise~void~
         +stop()* Promise~void~
         +getContractAddress(chain)* string
-        #parseDepositEvent(log, chainId)* TransferEvent|null
-        #parseFillEvent(log, chainId)* TransferEvent|null
+        #parseDepositEvent(log, chainId, timestamp)* TransferEvent|null
+        #parseFillEvent(log, chainId, timestamp)* TransferEvent|null
         #emit(event) void
         #generateTransferId(chainId, identifier) string
-        #normalizeAmount(rawAmount) string
         #getSizeBucket(amountUsd) TransferSizeBucket
     }
 
@@ -340,8 +339,8 @@ classDiagram
         +start() Promise~void~
         +stop() Promise~void~
         +getContractAddress(chain) string
-        #parseDepositEvent(log, chainId) TransferEvent|null
-        #parseFillEvent(log, chainId) TransferEvent|null
+        #parseDepositEvent(log, chainId, timestamp) TransferEvent|null
+        #parseFillEvent(log, chainId, timestamp) TransferEvent|null
     }
 
     class CCTPScout {
@@ -352,8 +351,8 @@ classDiagram
         +start() Promise~void~
         +stop() Promise~void~
         +getContractAddress(chain) string
-        #parseDepositEvent(log, chainId) TransferEvent|null
-        #parseFillEvent(log, chainId) TransferEvent|null
+        #parseDepositEvent(log, chainId, timestamp) TransferEvent|null
+        #parseFillEvent(log, chainId, timestamp) TransferEvent|null
     }
 
     class StargateScout {
@@ -364,8 +363,8 @@ classDiagram
         +start() Promise~void~
         +stop() Promise~void~
         +getContractAddress(chain) string
-        #parseDepositEvent(log, chainId) TransferEvent|null
-        #parseFillEvent(log, chainId) TransferEvent|null
+        #parseDepositEvent(log, chainId, timestamp) TransferEvent|null
+        #parseFillEvent(log, chainId, timestamp) TransferEvent|null
     }
 
     BaseScout <|-- AcrossScout

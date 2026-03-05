@@ -67,30 +67,23 @@ export type TransferSizeBucket = 'small' | 'medium' | 'large' | 'whale';
 /**
  * Payload published to `transfer:initiated` or `transfer:completed`.
  *
- * Fields that are only known at initiation time (txHashSource, blockInitiated)
- * or at completion time (txHashDest, blockCompleted, completedAt) are optional
- * so the same type covers both event kinds.
+ * Each event represents exactly ONE on-chain transaction. No optional fields.
+ * The processor combines two events (initiation + completion) into one
+ * transfer database record.
  *
- * bigint values (amount, blockInitiated, blockCompleted) are serialised as
- * decimal strings for JSON compatibility.
+ * Serialised to Redis via superjson, which handles bigint and Date natively.
  */
 export interface TransferEvent {
+  type: 'initiation' | 'completion';
   transferId: string;
   bridge: import('../lib/constants').BridgeName;
   sourceChain: import('../lib/constants').ChainName;
   destChain: import('../lib/constants').ChainName;
-  asset: string;
-  /** Raw on-chain amount as a decimal string (e.g. "10000000000" for 10k USDC). */
-  amount: string;
-  amountUsd?: number;
-  initiatedAt?: string;  // ISO 8601
-  completedAt?: string;  // ISO 8601
-  status: TransferStatus;
-  txHashSource?: string;
-  txHashDest?: string;
-  /** Source chain block number as a decimal string. */
-  blockInitiated?: string;
-  /** Destination chain block number as a decimal string. */
-  blockCompleted?: string;
-  gasPriceGwei?: number;
+  /** Raw on-chain token address (lowercase). Processor resolves to symbol. */
+  tokenAddress: string;
+  /** Raw on-chain amount as bigint. Processor normalises for storage. */
+  amount: bigint;
+  timestamp: Date;
+  txHash: string;
+  blockNumber: bigint;
 }

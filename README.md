@@ -116,6 +116,9 @@ npx prisma studio
 ### Apply Migrations
 ```bash
 npx prisma migrate dev
+
+# if schema is updated run
+npx prisma generate
 ```
 
 ### Performance Optimization (Optional)
