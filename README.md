@@ -9,7 +9,7 @@
 
 ## About
 
-Corridor Scouts is a public dashboard and data infrastructure for monitoring and analyzing cross-chain transfer intelligence in real-time. The system tracks transfer flows, settlement times, and liquidity dynamics across major DeFi bridges including Across, CCTP, Stargate, and others.
+Corridor Scouts is a public dashboard and data infrastructure for monitoring and analyzing cross-chain transfer intelligence in real-time. The system tracks transfer flows, settlement times, and liquidity dynamics across major DeFi bridges including Across, CCTP, and others.
 
 **Key Features:**
 - **Corridor Health Monitoring** - Real-time status tracking for bridge routes
@@ -29,7 +29,7 @@ Corridor Scouts is a public dashboard and data infrastructure for monitoring and
 ```mermaid
 flowchart TD
 
-    A["Bridge Scouts<br/>Across / CCTP / Stargate"] --> B["Event Queue<br/>Redis"]
+    A["Bridge Scouts<br/>Across / CCTP"] --> B["Event Queue<br/>Redis"]
 
     B --> C["Transfer Processor"]
     B --> D["Pool Processor"]
@@ -181,7 +181,19 @@ MIT License - see [LICENSE](LICENSE) for details
 
 ---
 
+## Bridge Status
+
+| Bridge | Status | Notes |
+|--------|--------|-------|
+| Across | ✅ Live | ETH, ARB, OPT, BASE |
+| CCTP | ✅ Live | ETH, ARB, OPT, BASE, AVAX |
+| Stargate | ⏸ On Hold | Deferred to a future release |
+
+A note on stargate - currently parseFillEvent always returns null which will create junk data - everything will be considered stuck. Research and fix it properly. Need to look up Stargate's actual contract events, and implement real completion detection. Partial implementation exists on the branch feature/stargate-scout. Options to fix later:
+
+1. Find Stargate's completion event - Stargate does have completion events, they're just on the destination chain. Need to identify the correct event signature (likely SwapRemote or similar on the destination Pool contract).
+2. Use a different Stargate event entirely - Stargate V2 may have cleaner events. Or there may be a unified event we're missing.
+
 ## Status
 
 🚧 **Under Active Development** - This project is in early development. Expect breaking changes and incomplete features.
-
