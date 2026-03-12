@@ -64,13 +64,25 @@ export const STABLECOINS = ['USDC', 'USDT', 'DAI'] as const;
 // ---------------------------------------------------------------------------
 
 /**
+ * Across V3 HubPool address on Ethereum mainnet.
+ *
+ * The HubPool is the central liquidity contract where LPs deposit funds.
+ * It exposes `pooledTokens(address)` which returns per-token liquidReserves
+ * and utilizedReserves — the source of truth for aggregate TVL and utilization.
+ *
+ * Source: https://docs.across.to/reference/contract-addresses
+ * TODO: re-verify before mainnet deployment.
+ */
+export const ACROSS_HUBPOOL_ADDRESS = '0xc186fA914353c44b2E33eBE05f21846F1048bEda';
+
+/**
  * Across V3 SpokePool addresses per chain (ETH, ARB, OPT, BASE).
  * Polygon is not included — no address defined in spec.
  * Verify against https://docs.across.to/ before deploying.
  */
 export const ACROSS_SPOKEPOOL_ADDRESSES: Partial<Record<ChainName, string>> = {
   ethereum: '0x5c7BCd6E7De5423a257D81B442095A1a6ced35C5',
-  arbitrum: '0xe35e9842fceaCA96570B734083f4a58e8F7C5f2a',
+  arbitrum: '0xe35e9842fceaca96570b734083f4a58e8f7c5f2a',
   optimism: '0x6f26Bf09B1C792e3228e5467807a900A503c0281',
   base: '0x09aea4b2242abC8bb4BB78D537A67a245A7bEC64',
 };
@@ -223,6 +235,105 @@ export const REDIS_CHANNELS = {
 } as const;
 
 export type RedisChannel = (typeof REDIS_CHANNELS)[keyof typeof REDIS_CHANNELS];
+
+// ---------------------------------------------------------------------------
+// Stargate V1 Contracts & Chain ID Mappings (UPDATED-SPEC.md "Add Stargate (Week 3)")
+// ---------------------------------------------------------------------------
+
+/**
+ * Stargate's internal chain IDs — NOT the same as EVM chain IDs.
+ * The Swap event's `chainId` field uses these values to identify the destination chain.
+ *
+ * Reverse mapping: Stargate internal ID → ChainName.
+ * Verify at https://stargateprotocol.gitbook.io/stargate/developers/contract-addresses/mainnet
+ */
+export const STARGATE_CHAIN_IDS: Record<number, ChainName> = {
+  101: 'ethereum',
+  110: 'arbitrum',
+  111: 'optimism',
+  106: 'avalanche',
+  109: 'polygon',
+};
+
+/**
+ * Stargate V1 Router addresses per chain.
+ *
+ * Returned by StargateScout.getContractAddress() for BaseScout interface compliance.
+ * The Router is NOT the event source — actual Swap event listeners are registered
+ * on individual Pool contracts. See StargateScout.start().
+ *
+ * TODO: verify all addresses at:
+ * https://stargateprotocol.gitbook.io/stargate/developers/contract-addresses/mainnet
+ */
+export const STARGATE_ROUTER_ADDRESSES: Partial<Record<ChainName, string>> = {
+  ethereum:  '0x8731d54E9D02c286767d56ac03e8037C07e01e98', // TODO: verify
+  arbitrum:  '0x53Bf833A5d6c4ddA888F69c22C88C9f356a41614', // TODO: verify
+  optimism:  '0xB0D502E938ed5f4df2E681fE6E419ff29631d62b', // TODO: verify
+  avalanche: '0x45A01E4e04F14f7A4a6702c74187c5F6222033cd', // TODO: verify
+  polygon:   '0x45A01E4e04F14f7A4a6702c74187c5F6222033cd', // TODO: verify
+};
+
+/**
+ * Stargate V1 Pool contract addresses per chain, keyed by pool ID.
+ * Pool 1 = USDC, Pool 2 = USDT.
+ *
+ * These contracts emit the Swap events that StargateScout listens to.
+ *
+ * TODO: verify all addresses at:
+ * https://stargateprotocol.gitbook.io/stargate/developers/contract-addresses/mainnet
+ */
+export const STARGATE_POOL_ADDRESSES: Partial<Record<ChainName, Partial<Record<number, string>>>> = {
+  ethereum: {
+    1: '0xdf0770dF86a8034b3EFEf0A1Bb3c889B8332FF56', // USDC — TODO: verify
+    2: '0x38EA452219524Bb87e18dE1C24D3bB59510BD783', // USDT — TODO: verify
+  },
+  arbitrum: {
+    1: '0x892785f33CdeE22A30AEF750F285E18c18040c3e', // USDC — TODO: verify
+    2: '0xB6CfcF89a7B22988bfC96632aC2A9D6daB60d641', // USDT — TODO: verify
+  },
+  optimism: {
+    1: '0xDecC0c09c3B5f6e92EF4184125D5648a66E35298', // USDC — TODO: verify
+    2: '0x165137624F1f692e69659f944BF69DE02874ee27', // USDT — TODO: verify
+  },
+  avalanche: {
+    1: '0x1205f31718499dBf1fCa446663B532Ef87481fe1', // USDC — TODO: verify
+    2: '0x29e38769f23701A2e4A8Ef0492e19dA4604Be62c', // USDT — TODO: verify
+  },
+  polygon: {
+    1: '0x1205f31718499dBf1fCa446663B532Ef87481fe1', // USDC — TODO: verify
+    2: '0x29e38769f23701A2e4A8Ef0492e19dA4604Be62c', // USDT — TODO: verify
+  },
+};
+
+/**
+ * Token addresses per chain per Stargate pool ID.
+ * Pool 1 = USDC, Pool 2 = USDT across all chains.
+ *
+ * Used by StargateScout to resolve tokenAddress from dstPoolId + source chain.
+ * Values sourced from TOKEN_REGISTRY in docs/DATA-MODEL.md §3.2.
+ */
+export const STARGATE_POOL_TOKEN_ADDRESSES: Partial<Record<ChainName, Partial<Record<number, string>>>> = {
+  ethereum: {
+    1: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', // USDC
+    2: '0xdac17f958d2ee523a2206206994597c13d831ec7', // USDT
+  },
+  arbitrum: {
+    1: '0xaf88d065e77c8cc2239327c5edb3a432268e5831', // USDC
+    2: '0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9', // USDT (USD₮0)
+  },
+  optimism: {
+    1: '0x0b2c639c533813f4aa9d7837caf62653d097ff85', // USDC
+    2: '0x94b008aa00579c1307b0ef2c499ad98a8ce58e58', // USDT
+  },
+  avalanche: {
+    1: '0xb97ef9ef8734c71904d8002f8b6bc66dd9c48a6e', // USDC
+    2: '0x9702230a8ea53601f5cd2dc00fdbc13d4df4a8c7', // USDT (USDt)
+  },
+  polygon: {
+    1: '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359', // USDC
+    2: '0xc2132d05d31c914a87c6611c10748aeb04b58e8f', // USDT (USDT0)
+  },
+};
 
 // ---------------------------------------------------------------------------
 // Transfer Size Bucket Classification (docs/DATA-MODEL.md §3.1)
