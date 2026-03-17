@@ -56,6 +56,12 @@ jest.mock('../../../src/lib/price-service', () => ({
   },
 }));
 
+jest.mock('../../../src/lib/redis', () => ({
+  redis: { publish: jest.fn() },
+  publish: jest.fn().mockResolvedValue(undefined),
+  subscribe: jest.fn(),
+}));
+
 // ---------------------------------------------------------------------------
 // Imports — after mock declarations
 // ---------------------------------------------------------------------------
@@ -82,7 +88,8 @@ const ETH_SPOKEPOOL = ACROSS_SPOKEPOOL_ADDRESSES.ethereum!;
 //   Arbitrum: USDC, USDT, DAI, WETH  → 4
 //   Optimism: USDC, USDT, DAI, WETH  → 4
 //   Base:     USDC, WETH             → 2   (only 2 tokens in registry for Base)
-const EXPECTED_SPOKEPOOL_CALLS = 14;
+//   Polygon:  USDC, USDT, DAI, WETH  → 4
+const EXPECTED_SPOKEPOOL_CALLS = 18;
 
 // HubPool queries Ethereum tokens: USDC, USDT, DAI, WETH → 4
 const EXPECTED_HUBPOOL_CALLS = 4;
@@ -127,7 +134,7 @@ describe('run() — bridge dispatch', () => {
     const processor = new PoolProcessor();
     await processor.run();
 
-    // SpokePool chains: ethereum, arbitrum, optimism, base — 4 calls
+    // SpokePool chains: ethereum, arbitrum, optimism, base, polygon — 5 calls
     // HubPool also calls getProvider('ethereum') — 1 additional call
     const spokeCalls = Object.keys(ACROSS_SPOKEPOOL_ADDRESSES) as string[];
     for (const chain of spokeCalls) {

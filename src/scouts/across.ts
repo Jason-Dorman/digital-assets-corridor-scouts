@@ -27,7 +27,12 @@ import type { TransferEvent } from '../types';
 // Module-level constants
 // ---------------------------------------------------------------------------
 
-/** Chains where SpokePool addresses are defined (UPDATED-SPEC.md, Week 1-2). */
+/**
+ * Chains where SpokePool addresses are verified and active.
+ *
+ * Polygon is excluded: the SpokePool address in constants.ts is marked TODO/unverified.
+ * Add 'polygon' back once the address is confirmed against https://docs.across.to/reference/contract-addresses
+ */
 const ACROSS_SCOUT_CHAINS: ChainName[] = ['ethereum', 'arbitrum', 'optimism', 'base'];
 
 /**
@@ -61,8 +66,8 @@ const SPOKE_POOL_IFACE = new Interface(SPOKE_POOL_ABI);
 // ---------------------------------------------------------------------------
 
 export class AcrossScout extends BaseScout {
-  constructor() {
-    super(ACROSS_SCOUT_CHAINS);
+  constructor(onEvent: (event: import('../types').TransferEvent) => Promise<void>) {
+    super(ACROSS_SCOUT_CHAINS, onEvent);
   }
 
   // ---------------------------------------------------------------------------
@@ -109,11 +114,7 @@ export class AcrossScout extends BaseScout {
         const payload = args[args.length - 1] as { log: Log };
         const log = payload.log;
         try {
-          const block = await provider.getBlock(log.blockNumber);
-          const timestamp = block !== null
-            ? new Date(block.timestamp * 1000)
-            : new Date();
-
+          const timestamp = await this.getBlockTimestamp(provider, chainId, log.blockNumber);
           const event = this.parseDepositEvent(log, chainId, timestamp);
           if (event !== null) {
             await this.emit(event);
@@ -132,11 +133,7 @@ export class AcrossScout extends BaseScout {
         const payload = args[args.length - 1] as { log: Log };
         const log = payload.log;
         try {
-          const block = await provider.getBlock(log.blockNumber);
-          const timestamp = block !== null
-            ? new Date(block.timestamp * 1000)
-            : new Date();
-
+          const timestamp = await this.getBlockTimestamp(provider, chainId, log.blockNumber);
           const event = this.parseFillEvent(log, chainId, timestamp);
           if (event !== null) {
             await this.emit(event);

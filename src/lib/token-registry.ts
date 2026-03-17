@@ -112,9 +112,23 @@ export function getDecimals(chainId: number, tokenAddress: string): number {
 /**
  * Converts a raw on-chain bigint amount to a human-readable float.
  *
+ * Splits into integer and fractional parts using BigInt arithmetic before
+ * converting to Number. Converting the full rawAmount to Number first would
+ * lose precision for amounts > Number.MAX_SAFE_INTEGER (~9×10^15), which can
+ * occur with whale ETH transfers (18 decimals, raw value up to ~10^26).
+ *
+ * Precision note: for 18-decimal tokens the divisor is 10^18 > MAX_SAFE_INTEGER,
+ * so Number(remainder) and Number(divisor) are themselves imprecise — the
+ * fractional part carries ~1–2 ULP of rounding error. This is negligible for
+ * USD calculations (error < 1e-12 dollars) but should not be used where
+ * sub-wei precision is required.
+ *
  * Example: normalizeAmount(1_000_000n, 6) → 1.0  (USDC)
  *          normalizeAmount(1_000_000_000_000_000_000n, 18) → 1.0  (WETH)
  */
 export function normalizeAmount(rawAmount: bigint, decimals: number): number {
-  return Number(rawAmount) / Math.pow(10, decimals);
+  const divisor = 10n ** BigInt(decimals);
+  const whole = rawAmount / divisor;       // integer part — fits in Number (safe up to ~9×10^15 whole tokens)
+  const remainder = rawAmount % divisor;   // fractional part — < divisor; conversion to Number has negligible rounding error for decimals ≤ 18
+  return Number(whole) + Number(remainder) / Number(divisor);
 }

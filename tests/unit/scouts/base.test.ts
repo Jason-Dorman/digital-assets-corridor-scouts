@@ -5,22 +5,16 @@
  * concrete subclass that implements every abstract method as a no-op so
  * the protected helpers can be exercised directly.
  *
- * External modules (lib/redis, lib/rpc) are fully mocked so no real
- * Redis connections or RPC calls are made.
+ * External modules (lib/rpc) are fully mocked so no real RPC calls are made.
+ *
+ * emit() now calls the onEvent handler injected at construction — it no longer
+ * publishes to Redis directly. Tests verify the injected handler is invoked
+ * with the correct event payload.
  */
 
 // ---------------------------------------------------------------------------
-// Mock setup — variable declarations must precede jest.mock() factory refs
+// Mock setup
 // ---------------------------------------------------------------------------
-
-const mockPublish = jest.fn().mockResolvedValue(undefined);
-const mockRedisInstance = { publish: jest.fn() };
-
-jest.mock('../../../src/lib/redis', () => ({
-  redis: mockRedisInstance,
-  publish: mockPublish,
-  subscribe: jest.fn(),
-}));
 
 const mockGetProvider = jest.fn().mockImplementation((chain: string) => ({
   _chain: chain,
@@ -37,9 +31,8 @@ jest.mock('../../../src/lib/rpc', () => ({
 
 import type { Log } from 'ethers';
 import { BaseScout } from '../../../src/scouts/base';
-import { REDIS_CHANNELS } from '../../../src/lib/constants';
 import type { ChainName } from '../../../src/lib/constants';
-import type { TransferEvent, TransferSizeBucket } from '../../../src/types';
+import type { TransferEvent } from '../../../src/types';
 
 // ---------------------------------------------------------------------------
 // Concrete test double
@@ -68,16 +61,12 @@ class StubScout extends BaseScout {
   callGenerateTransferId(chainId: number | string, identifier: number | string): string {
     return this.generateTransferId(chainId, identifier);
   }
-  callGetSizeBucket(amountUsd: number): TransferSizeBucket {
-    return this.getSizeBucket(amountUsd);
-  }
 
   // Expose protected state
   get exposedChains() { return this.chains; }
   get exposedIsRunning() { return this.isRunning; }
   get exposedEventListeners() { return this.eventListeners; }
   get exposedRpcProviders() { return this.rpcProviders; }
-  get exposedRedis() { return this.redis; }
 }
 
 // ---------------------------------------------------------------------------
@@ -100,11 +89,10 @@ function buildEvent(type: TransferEvent['type']): TransferEvent {
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// Shared reset
 // ---------------------------------------------------------------------------
 
 beforeEach(() => {
-  mockPublish.mockClear();
   mockGetProvider.mockClear();
 });
 
@@ -114,47 +102,42 @@ beforeEach(() => {
 
 describe('constructor', () => {
   it('stores the given chains array', () => {
-    const scout = new StubScout(['ethereum', 'arbitrum']);
+    const scout = new StubScout(['ethereum', 'arbitrum'], jest.fn());
     expect(scout.exposedChains).toEqual(['ethereum', 'arbitrum']);
   });
 
   it('initialises isRunning to false', () => {
-    const scout = new StubScout(['ethereum']);
+    const scout = new StubScout(['ethereum'], jest.fn());
     expect(scout.exposedIsRunning).toBe(false);
   });
 
   it('initialises eventListeners as an empty array', () => {
-    const scout = new StubScout(['ethereum']);
+    const scout = new StubScout(['ethereum'], jest.fn());
     expect(scout.exposedEventListeners).toEqual([]);
   });
 
   it('creates an rpcProviders Map with one entry per chain', () => {
-    const scout = new StubScout(['ethereum', 'arbitrum', 'base']);
+    const scout = new StubScout(['ethereum', 'arbitrum', 'base'], jest.fn());
     expect(scout.exposedRpcProviders.size).toBe(3);
   });
 
   it('calls getProvider once for each supplied chain', () => {
-    new StubScout(['ethereum', 'arbitrum']);
+    new StubScout(['ethereum', 'arbitrum'], jest.fn());
     expect(mockGetProvider).toHaveBeenCalledTimes(2);
     expect(mockGetProvider).toHaveBeenCalledWith('ethereum');
     expect(mockGetProvider).toHaveBeenCalledWith('arbitrum');
   });
 
   it('maps each chain to its own provider instance in rpcProviders', () => {
-    const scout = new StubScout(['ethereum', 'optimism']);
+    const scout = new StubScout(['ethereum', 'optimism'], jest.fn());
     const ethProvider = scout.exposedRpcProviders.get('ethereum') as any;
     const optProvider = scout.exposedRpcProviders.get('optimism') as any;
     expect(ethProvider._chain).toBe('ethereum');
     expect(optProvider._chain).toBe('optimism');
   });
 
-  it('stores the shared redis singleton', () => {
-    const scout = new StubScout(['ethereum']);
-    expect(scout.exposedRedis).toBe(mockRedisInstance);
-  });
-
   it('works with a single chain', () => {
-    const scout = new StubScout(['base']);
+    const scout = new StubScout(['base'], jest.fn());
     expect(scout.exposedChains).toHaveLength(1);
     expect(scout.exposedRpcProviders.size).toBe(1);
     expect(mockGetProvider).toHaveBeenCalledWith('base');
@@ -164,7 +147,7 @@ describe('constructor', () => {
     const allChains: ChainName[] = [
       'ethereum', 'arbitrum', 'optimism', 'base', 'polygon', 'avalanche',
     ];
-    const scout = new StubScout(allChains);
+    const scout = new StubScout(allChains, jest.fn());
     expect(scout.exposedRpcProviders.size).toBe(6);
   });
 });
@@ -174,28 +157,27 @@ describe('constructor', () => {
 // ---------------------------------------------------------------------------
 
 describe('emit', () => {
-  it("routes type 'initiation' to the transfer:initiated channel", async () => {
-    const scout = new StubScout(['ethereum']);
-    await scout.callEmit(buildEvent('initiation'));
-    expect(mockPublish).toHaveBeenCalledTimes(1);
-    expect(mockPublish).toHaveBeenCalledWith(
-      REDIS_CHANNELS.TRANSFER_INITIATED,
-      expect.objectContaining({ type: 'initiation' }),
-    );
+  it('calls the injected onEvent handler with an initiation event', async () => {
+    const onEvent = jest.fn().mockResolvedValue(undefined);
+    const scout = new StubScout(['ethereum'], onEvent);
+    const event = buildEvent('initiation');
+    await scout.callEmit(event);
+    expect(onEvent).toHaveBeenCalledTimes(1);
+    expect(onEvent).toHaveBeenCalledWith(event);
   });
 
-  it("routes type 'completion' to the transfer:completed channel", async () => {
-    const scout = new StubScout(['ethereum']);
-    await scout.callEmit(buildEvent('completion'));
-    expect(mockPublish).toHaveBeenCalledTimes(1);
-    expect(mockPublish).toHaveBeenCalledWith(
-      REDIS_CHANNELS.TRANSFER_COMPLETED,
-      expect.objectContaining({ type: 'completion' }),
-    );
+  it('calls the injected onEvent handler with a completion event', async () => {
+    const onEvent = jest.fn().mockResolvedValue(undefined);
+    const scout = new StubScout(['ethereum'], onEvent);
+    const event = buildEvent('completion');
+    await scout.callEmit(event);
+    expect(onEvent).toHaveBeenCalledTimes(1);
+    expect(onEvent).toHaveBeenCalledWith(event);
   });
 
-  it('passes the full event payload to publish', async () => {
-    const scout = new StubScout(['ethereum']);
+  it('passes the full event payload to onEvent', async () => {
+    const onEvent = jest.fn().mockResolvedValue(undefined);
+    const scout = new StubScout(['ethereum'], onEvent);
     const event: TransferEvent = {
       type: 'initiation',
       transferId: '1_99999',
@@ -209,19 +191,18 @@ describe('emit', () => {
       blockNumber: 19000000n,
     };
     await scout.callEmit(event);
-    expect(mockPublish).toHaveBeenCalledWith(REDIS_CHANNELS.TRANSFER_INITIATED, event);
+    expect(onEvent).toHaveBeenCalledWith(event);
   });
 
-  it('uses the exact channel strings defined in REDIS_CHANNELS', async () => {
-    const scout = new StubScout(['ethereum']);
-
+  it('does not call Redis publish directly (Redis is the processor\'s responsibility)', async () => {
+    // emit() delegates to onEvent — it must not bypass the processor and
+    // write to Redis itself. If onEvent is a mock that never calls publish,
+    // nothing Redis-related should happen.
+    const onEvent = jest.fn().mockResolvedValue(undefined);
+    const scout = new StubScout(['ethereum'], onEvent);
     await scout.callEmit(buildEvent('initiation'));
-    expect(mockPublish.mock.calls[0][0]).toBe('transfer:initiated');
-
-    mockPublish.mockClear();
-
-    await scout.callEmit(buildEvent('completion'));
-    expect(mockPublish.mock.calls[0][0]).toBe('transfer:completed');
+    // Only the injected handler should have been called
+    expect(onEvent).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -230,7 +211,7 @@ describe('emit', () => {
 // ---------------------------------------------------------------------------
 
 describe('generateTransferId', () => {
-  const scout = new StubScout(['ethereum']);
+  const scout = new StubScout(['ethereum'], jest.fn());
 
   it('produces the Across format: originChainId_depositId', () => {
     expect(scout.callGenerateTransferId(1, 12345)).toBe('1_12345');
@@ -278,95 +259,24 @@ describe('generateTransferId', () => {
 });
 
 // ---------------------------------------------------------------------------
-// getSizeBucket()
-// ---------------------------------------------------------------------------
-
-describe('getSizeBucket', () => {
-  const scout = new StubScout(['ethereum']);
-
-  // Bucket: small (< $10,000)
-  it('classifies $0 as small', () => {
-    expect(scout.callGetSizeBucket(0)).toBe('small');
-  });
-
-  it('classifies $1 as small', () => {
-    expect(scout.callGetSizeBucket(1)).toBe('small');
-  });
-
-  it('classifies $9,999 as small (just below the $10k boundary)', () => {
-    expect(scout.callGetSizeBucket(9_999)).toBe('small');
-  });
-
-  // Bucket: medium ($10,000 – $99,999)
-  it('classifies $10,000 as medium (at the lower boundary)', () => {
-    expect(scout.callGetSizeBucket(10_000)).toBe('medium');
-  });
-
-  it('classifies $50,000 as medium', () => {
-    expect(scout.callGetSizeBucket(50_000)).toBe('medium');
-  });
-
-  it('classifies $99,999 as medium (just below the $100k boundary)', () => {
-    expect(scout.callGetSizeBucket(99_999)).toBe('medium');
-  });
-
-  // Bucket: large ($100,000 – $999,999)
-  it('classifies $100,000 as large (at the lower boundary)', () => {
-    expect(scout.callGetSizeBucket(100_000)).toBe('large');
-  });
-
-  it('classifies $500,000 as large', () => {
-    expect(scout.callGetSizeBucket(500_000)).toBe('large');
-  });
-
-  it('classifies $999,999 as large (just below the $1M boundary)', () => {
-    expect(scout.callGetSizeBucket(999_999)).toBe('large');
-  });
-
-  // Bucket: whale ($1,000,000+)
-  it('classifies $1,000,000 as whale (at the lower boundary)', () => {
-    expect(scout.callGetSizeBucket(1_000_000)).toBe('whale');
-  });
-
-  it('classifies $5,000,000 as whale', () => {
-    expect(scout.callGetSizeBucket(5_000_000)).toBe('whale');
-  });
-
-  it('classifies very large amounts as whale', () => {
-    expect(scout.callGetSizeBucket(100_000_000)).toBe('whale');
-  });
-
-  // All four buckets are reachable
-  it('covers all four buckets across the threshold range', () => {
-    const buckets = new Set([
-      scout.callGetSizeBucket(0),
-      scout.callGetSizeBucket(10_000),
-      scout.callGetSizeBucket(100_000),
-      scout.callGetSizeBucket(1_000_000),
-    ]);
-    expect(buckets).toEqual(new Set(['small', 'medium', 'large', 'whale']));
-  });
-});
-
-// ---------------------------------------------------------------------------
 // eventListeners
 // ---------------------------------------------------------------------------
 
 describe('eventListeners', () => {
   it('starts as an empty array', () => {
-    const scout = new StubScout(['ethereum']);
+    const scout = new StubScout(['ethereum'], jest.fn());
     expect(scout.exposedEventListeners).toHaveLength(0);
   });
 
   it('allows pushing cleanup functions (simulating subclass listener registration)', () => {
-    const scout = new StubScout(['ethereum']);
+    const scout = new StubScout(['ethereum'], jest.fn());
     const cleanup = jest.fn();
     scout.exposedEventListeners.push(cleanup);
     expect(scout.exposedEventListeners).toHaveLength(1);
   });
 
   it('stored cleanup functions are callable', () => {
-    const scout = new StubScout(['ethereum']);
+    const scout = new StubScout(['ethereum'], jest.fn());
     const cleanup = jest.fn();
     scout.exposedEventListeners.push(cleanup);
     scout.exposedEventListeners[0]();
@@ -374,7 +284,7 @@ describe('eventListeners', () => {
   });
 
   it('supports multiple cleanup functions (one per contract listener)', () => {
-    const scout = new StubScout(['ethereum', 'arbitrum']);
+    const scout = new StubScout(['ethereum', 'arbitrum'], jest.fn());
     const cleanupA = jest.fn();
     const cleanupB = jest.fn();
     scout.exposedEventListeners.push(cleanupA, cleanupB);
@@ -382,8 +292,8 @@ describe('eventListeners', () => {
   });
 
   it('each instance has its own independent eventListeners array', () => {
-    const scout1 = new StubScout(['ethereum']);
-    const scout2 = new StubScout(['ethereum']);
+    const scout1 = new StubScout(['ethereum'], jest.fn());
+    const scout2 = new StubScout(['ethereum'], jest.fn());
     scout1.exposedEventListeners.push(jest.fn());
     expect(scout2.exposedEventListeners).toHaveLength(0);
   });

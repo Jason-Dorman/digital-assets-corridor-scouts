@@ -51,9 +51,9 @@ sequenceDiagram
     autonumber
     participant SC as Source Chain
     participant Scout as Bridge Scout
-    participant Queue as Redis Queue
     participant Proc as Transfer Processor
     participant DB as PostgreSQL
+    participant RD as Redis (pub/sub)
     participant DC as Dest Chain
     participant API as API Layer
     participant UI as Dashboard
@@ -62,20 +62,20 @@ sequenceDiagram
 
     SC->>Scout: V3FundsDeposited event
     Scout->>Scout: Parse & normalize
-    Scout->>Queue: Publish transfer:initiated
-    Queue->>Proc: Consume event
+    Scout->>Proc: processEvent(initiation)
     Proc->>DB: INSERT transfer (status=pending)
     Proc->>Proc: Add to pending map
+    Proc->>RD: Publish transfer:initiated (WebSocket broadcast)
 
     Note over SC,DC: Time passes (~3-5 min for Across)
 
     DC->>Scout: FilledV3Relay event
     Scout->>Scout: Parse & normalize
-    Scout->>Queue: Publish transfer:completed
-    Queue->>Proc: Consume event
+    Scout->>Proc: processEvent(completion)
     Proc->>Proc: Match to pending transfer
     Proc->>Proc: Calculate duration
     Proc->>DB: UPDATE transfer (status=completed)
+    Proc->>RD: Publish transfer:completed (WebSocket broadcast)
 
     Note over DB,UI: User requests data
 
@@ -106,16 +106,16 @@ flowchart TB
         SS[Stargate Scout]
     end
 
-    subgraph Queue["Message Queue"]
-        RQ[(Redis)]
-    end
-
     subgraph Processing["Processing Layer"]
         TP[Transfer Processor]
         PP[Pool Processor]
         FC[Fragility Calculator]
         IC[Impact Calculator]
         LC[LFV Calculator]
+    end
+
+    subgraph Broadcast["WebSocket Broadcast"]
+        RD[(Redis pub/sub)]
     end
 
     subgraph Storage["Storage Layer"]
@@ -152,19 +152,17 @@ flowchart TB
     ARB --> SS
     OPT --> SS
 
-    AS --> RQ
-    CS --> RQ
-    SS --> RQ
-
-    RQ --> TP
-    RQ --> PP
+    AS --> TP
+    CS --> TP
+    SS --> TP
 
     TP --> PG
+    TP --> RD
     PP --> PG
     PP --> FC
 
     FC --> PG
-    
+
     PG --> REST
     PG --> LC
     PG --> IC
@@ -173,13 +171,14 @@ flowchart TB
     PS --> PG
     AD --> PG
 
+    RD --> WS
     REST --> DASH
     WS --> DASH
     REST --> DETAIL
 
     style External fill:#f5f5f5
     style Scouts fill:#e3f2fd
-    style Queue fill:#fff3e0
+    style Broadcast fill:#fff3e0
     style Processing fill:#e8f5e9
     style Storage fill:#fce4ec
     style Jobs fill:#f3e5f5

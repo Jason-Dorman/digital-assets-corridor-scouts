@@ -103,33 +103,38 @@ describe('publish', () => {
 // ---------------------------------------------------------------------------
 
 describe('subscribe', () => {
+  /**
+   * The top-level 'message' dispatcher is registered once at module load
+   * (outside of subscribe()), not per subscribe() call. Capture it here,
+   * before beforeEach's mockOn.mockClear() wipes the call record.
+   */
+  let messageHandler: (channel: string, raw: string) => void;
+
+  beforeAll(() => {
+    const call = mockOn.mock.calls.find(([event]) => event === 'message');
+    if (!call) throw new Error('Expected redisSubscriber.on("message", ...) at module load');
+    messageHandler = call[1];
+  });
+
   beforeEach(() => {
     mockIoRedisSubscribe.mockClear();
     mockOn.mockClear();
   });
 
-  /** Helper to grab the inner 'message' handler registered via redisSubscriber.on */
-  function getMessageHandler(): (channel: string, raw: string) => void {
-    const call = mockOn.mock.calls.find(([event]) => event === 'message');
-    if (!call) throw new Error('No message handler registered via .on()');
-    return call[1];
-  }
+  it('registers a single top-level "message" dispatcher at module load', () => {
+    // Verified by beforeAll — if messageHandler is set, .on('message', fn) was called
+    expect(typeof messageHandler).toBe('function');
+  });
 
   it('subscribes to the given Redis channel', async () => {
     await subscribe(REDIS_CHANNELS.TRANSFER_INITIATED, jest.fn());
     expect(mockIoRedisSubscribe).toHaveBeenCalledWith('transfer:initiated');
   });
 
-  it('registers a message event listener', async () => {
-    await subscribe(REDIS_CHANNELS.TRANSFER_INITIATED, jest.fn());
-    expect(mockOn).toHaveBeenCalledWith('message', expect.any(Function));
-  });
-
   it('calls the handler with the superjson-parsed message on the correct channel', async () => {
     const handler = jest.fn();
     await subscribe(REDIS_CHANNELS.TRANSFER_INITIATED, handler);
 
-    const messageHandler = getMessageHandler();
     const payload = { transferId: 'xyz', type: 'initiation' };
     messageHandler('transfer:initiated', superjson.stringify(payload));
 
@@ -141,7 +146,6 @@ describe('subscribe', () => {
     const handler = jest.fn();
     await subscribe(REDIS_CHANNELS.TRANSFER_INITIATED, handler);
 
-    const messageHandler = getMessageHandler();
     messageHandler('transfer:completed', superjson.stringify({ transferId: 'xyz' }));
 
     expect(handler).not.toHaveBeenCalled();
@@ -151,7 +155,6 @@ describe('subscribe', () => {
     const handler = jest.fn();
     await subscribe(REDIS_CHANNELS.POOL_SNAPSHOT, handler);
 
-    const messageHandler = getMessageHandler();
     const payload = { poolId: 'across_eth_usdc', tvl: 1_000_000, assets: ['USDC'] };
     messageHandler('pool:snapshot', superjson.stringify(payload));
 
@@ -162,7 +165,6 @@ describe('subscribe', () => {
     const handler = jest.fn();
     await subscribe(REDIS_CHANNELS.TRANSFER_INITIATED, handler);
 
-    const messageHandler = getMessageHandler();
     const payload = { amount: 10000000000n, timestamp: new Date('2026-01-01T00:00:00Z') };
     messageHandler('transfer:initiated', superjson.stringify(payload));
 

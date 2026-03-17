@@ -85,6 +85,8 @@ export const ACROSS_SPOKEPOOL_ADDRESSES: Partial<Record<ChainName, string>> = {
   arbitrum: '0xe35e9842fceaca96570b734083f4a58e8f7c5f2a',
   optimism: '0x6f26Bf09B1C792e3228e5467807a900A503c0281',
   base: '0x09aea4b2242abC8bb4BB78D537A67a245A7bEC64',
+  // TODO: verify against https://docs.across.to/reference/contract-addresses before deploying
+  polygon: '0x9295ee1d8C5b022Be115A2AD3c30C72E34e7F096',
 };
 
 // ---------------------------------------------------------------------------
@@ -143,12 +145,10 @@ export const SIZE_BUCKET_THRESHOLDS = {
 // Stuck Transfer Detection (docs/DATA-MODEL.md §4.1)
 // ---------------------------------------------------------------------------
 
-export const STUCK_THRESHOLDS_SECONDS: Record<string, number> = {
+export const STUCK_THRESHOLDS_SECONDS: Record<BridgeName, number> = {
   across: 30 * 60,    // 30 minutes
   cctp: 45 * 60,      // 45 minutes
   stargate: 30 * 60,  // 30 minutes
-  wormhole: 60 * 60,  // 60 minutes
-  layerzero: 30 * 60, // 30 minutes
 };
 
 // ---------------------------------------------------------------------------
@@ -166,12 +166,10 @@ export const FRAGILITY_THRESHOLDS = {
 // Impact Calculation (docs/DATA-MODEL.md §6)
 // ---------------------------------------------------------------------------
 
-export const SLIPPAGE_FACTORS: Record<string, number> = {
+export const SLIPPAGE_FACTORS: Record<BridgeName, number> = {
   across: 0.5,    // Intent-based; relayers absorb slippage
-  stargate: 1.0,  // Pool-based AMM
   cctp: 0.0,      // Burn/mint; no slippage
-  wormhole: 0.1,  // Message-based
-  layerzero: 0.1, // Message-based
+  stargate: 1.0,  // Pool-based AMM
 };
 
 export const IMPACT_THRESHOLDS = {
@@ -269,8 +267,12 @@ export const STARGATE_ROUTER_ADDRESSES: Partial<Record<ChainName, string>> = {
   ethereum:  '0x8731d54E9D02c286767d56ac03e8037C07e01e98', // TODO: verify
   arbitrum:  '0x53Bf833A5d6c4ddA888F69c22C88C9f356a41614', // TODO: verify
   optimism:  '0xB0D502E938ed5f4df2E681fE6E419ff29631d62b', // TODO: verify
-  avalanche: '0x45A01E4e04F14f7A4a6702c74187c5F6222033cd', // TODO: verify
-  polygon:   '0x45A01E4e04F14f7A4a6702c74187c5F6222033cd', // TODO: verify
+  // ⚠️  SUSPECTED COPY-PASTE ERROR: Avalanche and Polygon share the same address.
+  // Different chains cannot share a Router contract. Both must be verified and
+  // corrected against https://stargateprotocol.gitbook.io/stargate/developers/contract-addresses/mainnet
+  // before the Stargate scout is activated. See docs/AUDIT.md for details.
+  avalanche: '0x45A01E4e04F14f7A4a6702c74187c5F6222033cd', // TODO: verify — likely wrong
+  polygon:   '0x45A01E4e04F14f7A4a6702c74187c5F6222033cd', // TODO: verify — likely wrong (same as avalanche)
 };
 
 /**
@@ -295,13 +297,17 @@ export const STARGATE_POOL_ADDRESSES: Partial<Record<ChainName, Partial<Record<n
     1: '0xDecC0c09c3B5f6e92EF4184125D5648a66E35298', // USDC — TODO: verify
     2: '0x165137624F1f692e69659f944BF69DE02874ee27', // USDT — TODO: verify
   },
+  // ⚠️  SUSPECTED COPY-PASTE ERROR: Avalanche and Polygon share the same Pool addresses.
+  // Pool contracts are chain-specific — these cannot be correct for both chains.
+  // Verify both against https://stargateprotocol.gitbook.io/stargate/developers/contract-addresses/mainnet
+  // before activating the Stargate scout. See docs/AUDIT.md for details.
   avalanche: {
-    1: '0x1205f31718499dBf1fCa446663B532Ef87481fe1', // USDC — TODO: verify
-    2: '0x29e38769f23701A2e4A8Ef0492e19dA4604Be62c', // USDT — TODO: verify
+    1: '0x1205f31718499dBf1fCa446663B532Ef87481fe1', // USDC — TODO: verify — likely wrong
+    2: '0x29e38769f23701A2e4A8Ef0492e19dA4604Be62c', // USDT — TODO: verify — likely wrong
   },
   polygon: {
-    1: '0x1205f31718499dBf1fCa446663B532Ef87481fe1', // USDC — TODO: verify
-    2: '0x29e38769f23701A2e4A8Ef0492e19dA4604Be62c', // USDT — TODO: verify
+    1: '0x1205f31718499dBf1fCa446663B532Ef87481fe1', // USDC — TODO: verify — likely wrong (same as avalanche)
+    2: '0x29e38769f23701A2e4A8Ef0492e19dA4604Be62c', // USDT — TODO: verify — likely wrong (same as avalanche)
   },
 };
 

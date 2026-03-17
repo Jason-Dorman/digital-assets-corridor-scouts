@@ -18,6 +18,9 @@
 const mockPublish = jest.fn().mockResolvedValue(undefined);
 const mockRedisInstance = { publish: jest.fn() };
 
+/** Injected into AcrossScout in place of TransferProcessor.processEvent */
+const mockOnEvent = jest.fn().mockResolvedValue(undefined);
+
 const mockContractOn = jest.fn();
 const mockContractOff = jest.fn();
 
@@ -55,7 +58,7 @@ jest.mock('ethers', () => {
 
 import { Interface, type Log } from 'ethers';
 import { AcrossScout } from '../../../src/scouts/across';
-import { ACROSS_SPOKEPOOL_ADDRESSES, CHAIN_IDS, REDIS_CHANNELS } from '../../../src/lib/constants';
+import { ACROSS_SPOKEPOOL_ADDRESSES, CHAIN_IDS } from '../../../src/lib/constants';
 
 // ---------------------------------------------------------------------------
 // Test fixtures
@@ -214,6 +217,7 @@ async function invokeListener(eventName: string, log: Log): Promise<void> {
 
 beforeEach(() => {
   mockPublish.mockClear();
+  mockOnEvent.mockClear();
   mockGetProvider.mockClear();
   mockContractOn.mockClear();
   mockContractOff.mockClear();
@@ -225,13 +229,13 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('constructor', () => {
-  it('scouts exactly the 4 chains that have SpokePool addresses (ethereum, arbitrum, optimism, base)', () => {
-    const scout = new AcrossScout();
+  it('scouts exactly the 4 chains with verified SpokePool addresses (ethereum, arbitrum, optimism, base)', () => {
+    const scout = new AcrossScout(mockOnEvent);
     expect((scout as any).chains).toEqual(['ethereum', 'arbitrum', 'optimism', 'base']);
   });
 
   it('isRunning starts as false', () => {
-    const scout = new AcrossScout();
+    const scout = new AcrossScout(mockOnEvent);
     expect((scout as any).isRunning).toBe(false);
   });
 });
@@ -241,7 +245,7 @@ describe('constructor', () => {
 // ---------------------------------------------------------------------------
 
 describe('getContractAddress', () => {
-  const scout = new AcrossScout();
+  const scout = new AcrossScout(mockOnEvent);
 
   it('returns the correct SpokePool address for ethereum', () => {
     expect(scout.getContractAddress('ethereum')).toBe(ACROSS_SPOKEPOOL_ADDRESSES.ethereum);
@@ -259,8 +263,8 @@ describe('getContractAddress', () => {
     expect(scout.getContractAddress('base')).toBe(ACROSS_SPOKEPOOL_ADDRESSES.base);
   });
 
-  it('throws for polygon (no address defined in spec)', () => {
-    expect(() => scout.getContractAddress('polygon')).toThrow();
+  it('returns the correct SpokePool address for polygon', () => {
+    expect(scout.getContractAddress('polygon')).toBe(ACROSS_SPOKEPOOL_ADDRESSES.polygon);
   });
 
   it('throws for avalanche (no address defined in spec)', () => {
@@ -273,7 +277,7 @@ describe('getContractAddress', () => {
 // ---------------------------------------------------------------------------
 
 describe('parseDepositEvent', () => {
-  const scout = new AcrossScout();
+  const scout = new AcrossScout(mockOnEvent);
 
   describe('happy path — ETH → ARB deposit', () => {
     const log = encodeDepositLog();
@@ -377,7 +381,7 @@ describe('parseDepositEvent', () => {
 // ---------------------------------------------------------------------------
 
 describe('parseFillEvent', () => {
-  const scout = new AcrossScout();
+  const scout = new AcrossScout(mockOnEvent);
 
   describe('happy path — fill observed on ARB, originated from ETH', () => {
     // chainId = 42161 (Arbitrum, where we're listening)
@@ -465,7 +469,7 @@ describe('parseFillEvent', () => {
 // ---------------------------------------------------------------------------
 
 describe('transferId consistency', () => {
-  const scout = new AcrossScout();
+  const scout = new AcrossScout(mockOnEvent);
 
   it('deposit on Ethereum and fill on Arbitrum produce the same transferId', () => {
     const depositLog = encodeDepositLog({
@@ -498,7 +502,7 @@ describe('transferId consistency', () => {
   });
 
   it('different depositIds produce different transferIds', () => {
-    const scout2 = new AcrossScout();
+    const scout2 = new AcrossScout(mockOnEvent);
     const log1 = encodeDepositLog({ depositId: 100 });
     const log2 = encodeDepositLog({ depositId: 200 });
     expect(
@@ -517,7 +521,7 @@ describe('start', () => {
   let scout: AcrossScout;
 
   beforeEach(async () => {
-    scout = new AcrossScout();
+    scout = new AcrossScout(mockOnEvent);
     await scout.start();
   });
 
@@ -560,7 +564,7 @@ describe('stop', () => {
   let scout: AcrossScout;
 
   beforeEach(async () => {
-    scout = new AcrossScout();
+    scout = new AcrossScout(mockOnEvent);
     await scout.start();
     await scout.stop();
   });
@@ -602,19 +606,18 @@ describe('deposit listener', () => {
   let scout: AcrossScout;
 
   beforeEach(async () => {
-    scout = new AcrossScout();
+    scout = new AcrossScout(mockOnEvent);
     await scout.start();
   });
 
-  it('emits to transfer:initiated channel when a valid deposit is observed', async () => {
+  it('calls onEvent with an initiation event when a valid deposit is observed', async () => {
     mockGetBlock.mockResolvedValue({ timestamp: BLOCK_TIMESTAMP_SECONDS });
     const log = encodeDepositLog();
 
     await invokeListener('V3FundsDeposited', log);
 
-    expect(mockPublish).toHaveBeenCalledTimes(1);
-    expect(mockPublish).toHaveBeenCalledWith(
-      REDIS_CHANNELS.TRANSFER_INITIATED,
+    expect(mockOnEvent).toHaveBeenCalledTimes(1);
+    expect(mockOnEvent).toHaveBeenCalledWith(
       expect.objectContaining({ bridge: 'across', type: 'initiation' }),
     );
   });
@@ -625,7 +628,7 @@ describe('deposit listener', () => {
 
     await invokeListener('V3FundsDeposited', log);
 
-    const emittedEvent = mockPublish.mock.calls[0][1];
+    const emittedEvent = mockOnEvent.mock.calls[0][0];
     expect(emittedEvent.timestamp).toEqual(new Date(BLOCK_TIMESTAMP_SECONDS * 1000));
   });
 
@@ -637,19 +640,19 @@ describe('deposit listener', () => {
     await invokeListener('V3FundsDeposited', log);
 
     const after = new Date();
-    const emittedTimestamp: Date = mockPublish.mock.calls[0][1].timestamp;
+    const emittedTimestamp: Date = mockOnEvent.mock.calls[0][0].timestamp;
     expect(emittedTimestamp.getTime()).toBeGreaterThanOrEqual(before.getTime());
     expect(emittedTimestamp.getTime()).toBeLessThanOrEqual(after.getTime());
   });
 
-  it('does NOT emit when getBlock throws (logs error, swallows exception)', async () => {
+  it('does NOT call onEvent when getBlock throws (logs error, swallows exception)', async () => {
     mockGetBlock.mockRejectedValue(new Error('RPC timeout'));
     const log = encodeDepositLog();
     const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
 
     await invokeListener('V3FundsDeposited', log);
 
-    expect(mockPublish).not.toHaveBeenCalled();
+    expect(mockOnEvent).not.toHaveBeenCalled();
     consoleSpy.mockRestore();
   });
 });
@@ -662,19 +665,18 @@ describe('fill listener', () => {
   let scout: AcrossScout;
 
   beforeEach(async () => {
-    scout = new AcrossScout();
+    scout = new AcrossScout(mockOnEvent);
     await scout.start();
   });
 
-  it('emits to transfer:completed channel when a valid fill is observed', async () => {
+  it('calls onEvent with a completion event when a valid fill is observed', async () => {
     mockGetBlock.mockResolvedValue({ timestamp: BLOCK_TIMESTAMP_SECONDS });
     const log = encodeFillLog();
 
     await invokeListener('FilledV3Relay', log);
 
-    expect(mockPublish).toHaveBeenCalledTimes(1);
-    expect(mockPublish).toHaveBeenCalledWith(
-      REDIS_CHANNELS.TRANSFER_COMPLETED,
+    expect(mockOnEvent).toHaveBeenCalledTimes(1);
+    expect(mockOnEvent).toHaveBeenCalledWith(
       expect.objectContaining({ bridge: 'across', type: 'completion' }),
     );
   });
@@ -685,7 +687,7 @@ describe('fill listener', () => {
 
     await invokeListener('FilledV3Relay', log);
 
-    const emittedEvent = mockPublish.mock.calls[0][1];
+    const emittedEvent = mockOnEvent.mock.calls[0][0];
     expect(emittedEvent.timestamp).toEqual(new Date(BLOCK_TIMESTAMP_SECONDS * 1000));
   });
 
@@ -697,19 +699,19 @@ describe('fill listener', () => {
     await invokeListener('FilledV3Relay', log);
 
     const after = new Date();
-    const emittedTimestamp: Date = mockPublish.mock.calls[0][1].timestamp;
+    const emittedTimestamp: Date = mockOnEvent.mock.calls[0][0].timestamp;
     expect(emittedTimestamp.getTime()).toBeGreaterThanOrEqual(before.getTime());
     expect(emittedTimestamp.getTime()).toBeLessThanOrEqual(after.getTime());
   });
 
-  it('does NOT emit when getBlock throws', async () => {
+  it('does NOT call onEvent when getBlock throws', async () => {
     mockGetBlock.mockRejectedValue(new Error('RPC timeout'));
     const log = encodeFillLog();
     const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
 
     await invokeListener('FilledV3Relay', log);
 
-    expect(mockPublish).not.toHaveBeenCalled();
+    expect(mockOnEvent).not.toHaveBeenCalled();
     consoleSpy.mockRestore();
   });
 });

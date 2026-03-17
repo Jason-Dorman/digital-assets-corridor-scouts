@@ -103,3 +103,131 @@ These are not marked TODO but were sourced from `DATA-MODEL.md §3.2` (internal 
 6. Consider whether Stargate V2 is preferable to V1 given the current state of the protocol
 
 **Status:** Blocked on address verification
+
+---
+
+### Missing Reconciliation Job
+
+**Issue:** Completion events that arrive without a matching initiation in memory or the database are logged as warnings and silently dropped (`TransferProcessor.handleCompletion`, line ~124).
+
+**When this happens:** The processor restarts between a transfer's initiation and its completion. The initiation was saved to the DB, but the in-memory `pendingTransfers` map is cleared on restart. If the completion event is replayed before the processor re-observes the initiation log, the lookup returns nothing and the event is discarded.
+
+**Impact:** Affected transfers remain permanently `pending` in the DB. `durationSeconds`, `completedAt`, and `txHashDest` are never written. This skews latency metrics and inflates the apparent stuck-transfer rate for the corridor.
+
+**Fix:** A reconciliation job that periodically scans the chain for fill/completion events matching transfers that are `pending` and older than the bridge's stuck threshold. This requires historical log indexing (e.g. `eth_getLogs` with block range).
+
+**Priority:** Post-Phase 0. Build once the happy-path pipeline is stable and producing real data. Blocked on: deciding whether to run as a Vercel cron, a standalone worker, or a one-off backfill script.
+
+---
+
+## Code Review Findings — 2026-03-16
+
+Issues identified during the Phase 0 code review (through prompt 3.3). Issues #1–#8 were fixed immediately. Issues #9–#14 are tracked here for resolution before or during Phase 1.
+
+---
+
+### #6 — `HEALTH_THRESHOLDS` missing the degraded success rate boundary
+
+**File:** `src/lib/constants.ts`
+
+**Issue:** `SUCCESS_RATE_HEALTHY: 99` and `SUCCESS_RATE_DOWN: 95` are defined, but there is no constant for the degraded boundary. The 95–99% range is implicit. Any health calculator must hard-code the logic `< HEALTHY && >= DOWN → degraded`, which is fragile and untested.
+
+**Fix:** Add `SUCCESS_RATE_DEGRADED` as an explicit constant (value: 95, same as `SUCCESS_RATE_DOWN`) or rename the existing constants to make the three-way split unambiguous. Update the health calculator and its tests to assert against the named constant.
+
+**Priority:** Before health calculator is implemented.
+
+---
+
+### #7 — Dead bridge entries in `STUCK_THRESHOLDS_SECONDS` and `SLIPPAGE_FACTORS`
+
+**File:** `src/lib/constants.ts`
+
+**Issue:** Both maps include `wormhole` and `layerzero` keys that are not in `BRIDGES`. They will never be used and the `Record<string, number>` type means typos in callers silently return `undefined` instead of a type error.
+
+**Fix:** Remove the dead entries. Type both maps as `Record<BridgeName, number>` so the TypeScript compiler catches any unsupported bridge name at the call site.
+
+**Priority:** Low — no runtime impact, but misleading.
+
+---
+
+### #8 — Duplicate `CHAIN_ID_TO_NAME` reverse-lookup map in `across.ts` and `cctp.ts`
+
+**Files:** `src/scouts/across.ts`, `src/scouts/cctp.ts`
+
+**Issue:** Both scouts define an identical module-level `CHAIN_ID_TO_NAME` Map built from `CHAIN_IDS`. Stargate will need the same map when activated. Any future chain addition must be reflected in three places.
+
+**Fix:** Export `CHAIN_ID_TO_NAME` from `src/lib/constants.ts` and import it in each scout. One source of truth.
+
+**Priority:** Low — fix before Stargate is activated to avoid a third copy.
+
+---
+
+### #9 — Wall-clock fallback in `getBlockTimestamp` can silently corrupt `durationSeconds`
+
+**File:** `src/scouts/base.ts`
+
+**Issue:** When `provider.getBlock()` returns `null` or throws, the fallback is `new Date()` (wall-clock time). If an initiation uses a real block timestamp and its completion uses a wall-clock fallback (or vice versa), `durationSeconds` in the database will be wildly wrong. Currently the fallback is silent — there is no log entry that would let an operator identify the affected transfer.
+
+**Fix:** Add a `console.warn` with the `transferId`, chain, and block number whenever the fallback is used. Consider also writing a `timestampSource: 'block' | 'fallback'` flag to the database so corrupted durations can be filtered out of latency metrics.
+
+**Priority:** Medium — log the warning at minimum before ingesting real data.
+
+---
+
+### #10 — CCTP `availableLiquidity: 0` is semantically ambiguous in `PoolProcessor`
+
+**File:** `src/processors/pool.ts`
+
+**Issue:** CCTP placeholder rows are written with `availableLiquidity: 0`. For Across SpokePools, `availableLiquidity: 0` means the pool is fully utilized (no capital available). For CCTP, it means the concept doesn't apply. Queries doing `WHERE available_liquidity = 0` cannot distinguish between the two cases.
+
+**Fix:** Use `availableLiquidity: null` for CCTP placeholders to represent "not applicable", consistent with how `utilization: null` represents "cannot be computed" for SpokePool rows.
+
+**Priority:** Low — fix before LFV queries are written to avoid building logic on a misleading zero.
+
+---
+
+### #11 — Sequential DB writes in `PoolProcessor.enrichAndStore`
+
+**File:** `src/processors/pool.ts`
+
+**Issue:** Pool snapshots are written in a serial `for` loop. At 23 rows and ~50ms/round-trip, each snapshot run takes ~1.15 seconds. This is well within the 5-minute cron interval now, but will become a bottleneck if more bridges or assets are added.
+
+**Fix:** Replace the serial loop with `Promise.allSettled()` of parallel `db.poolSnapshot.create()` calls. The same per-row error isolation is preserved since `allSettled` never short-circuits.
+
+**Priority:** Low — no correctness impact, purely a performance improvement. Fix before adding a third bridge with significant pool count.
+
+---
+
+### #12 — `SIZE_BUCKET_THRESHOLDS` key names are semantically reversed
+
+**File:** `src/lib/constants.ts`
+
+**Issue:** The keys `small`, `medium`, `large` store upper bounds for those buckets (e.g., `small: 10_000` means "upper bound of small is $10K"), not representative values. This is counter-intuitive: a reader expects `small` to mean "the small threshold" not "the boundary above small". The logic in `getSizeBucket` is correct but maintainers are likely to misread the constant's intent.
+
+**Fix:** Rename keys to `MEDIUM_MIN`, `LARGE_MIN`, `WHALE_MIN` to make clear they are lower bounds of the upper bucket, or document the convention explicitly in the object comment.
+
+**Priority:** Low — readability only.
+
+---
+
+### #13 — `stop()` does not enforce `isRunning = false` in `BaseScout`
+
+**File:** `src/scouts/base.ts`
+
+**Issue:** `stop()` is abstract, so each subclass is responsible for setting `this.isRunning = false`. Both `AcrossScout` and `CCTPScout` do this correctly, but there is no base-class enforcement. A future scout that omits this line will silently fail to allow restart without a process restart.
+
+**Fix:** Add a `protected stopCleanup(): void` concrete method in `BaseScout` that clears `eventListeners` and sets `isRunning = false`. Each subclass `stop()` calls `this.stopCleanup()` after its own teardown.
+
+**Priority:** Low — fix before a third scout is added to reduce the chance of a future bug.
+
+---
+
+### #14 — `Anomaly` model has no `updatedAt`
+
+**File:** `prisma/schema.prisma`
+
+**Issue:** `Anomaly` rows can be mutated (the `resolvedAt` field is written when an anomaly is resolved), but there is no `updatedAt` field. Operators cannot query "anomalies modified in the last hour" without relying on `resolvedAt`, which is only set once and does not cover edits to `details` or `severity`.
+
+**Fix:** Add `updatedAt DateTime @updatedAt @map("updated_at")` to the `Anomaly` model.
+
+**Priority:** Low — add before the anomaly-detector job writes its first real data.

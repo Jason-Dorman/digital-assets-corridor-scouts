@@ -13,14 +13,14 @@
 // Mock declarations
 // ---------------------------------------------------------------------------
 
-const mockCreate  = jest.fn().mockResolvedValue({});
+const mockUpsert  = jest.fn().mockResolvedValue({});
 const mockUpdate  = jest.fn().mockResolvedValue({});
 const mockFindUnique = jest.fn();
 
 jest.mock('../../../src/lib/db', () => ({
   db: {
     transfer: {
-      create:     (...args: unknown[]) => mockCreate(...args),
+      upsert:     (...args: unknown[]) => mockUpsert(...args),
       update:     (...args: unknown[]) => mockUpdate(...args),
       findUnique: (...args: unknown[]) => mockFindUnique(...args),
     },
@@ -105,7 +105,7 @@ function makeCompletion(overrides: Partial<TransferEvent> = {}): TransferEvent {
 // ---------------------------------------------------------------------------
 
 beforeEach(() => {
-  mockCreate.mockClear();
+  mockUpsert.mockClear();
   mockUpdate.mockClear();
   mockFindUnique.mockClear();
   mockPublish.mockClear();
@@ -128,14 +128,14 @@ describe('processEvent routing', () => {
     const processor = new TransferProcessor();
     const event = makeInitiation();
     await processor.processEvent(event);
-    expect(mockCreate).toHaveBeenCalledTimes(1);
+    expect(mockUpsert).toHaveBeenCalledTimes(1);
   });
 
   it('calls handleCompletion for type="completion" (fast path — initiation in memory)', async () => {
     const processor = new TransferProcessor();
     // First register the initiation so fast path works
     await processor.processEvent(makeInitiation());
-    mockCreate.mockClear();
+    mockUpsert.mockClear();
     mockPublish.mockClear();
 
     await processor.processEvent(makeCompletion());
@@ -146,7 +146,7 @@ describe('processEvent routing', () => {
     const processor = new TransferProcessor();
     // Cast to any to bypass TypeScript so we can test runtime safety
     await processor.processEvent({ type: 'unknown' } as any);
-    expect(mockCreate).not.toHaveBeenCalled();
+    expect(mockUpsert).not.toHaveBeenCalled();
     expect(mockUpdate).not.toHaveBeenCalled();
   });
 });
@@ -166,8 +166,8 @@ describe('handleInitiation — token enrichment', () => {
     mockGetTokenInfo.mockReturnValue({ symbol: 'USDC', decimals: 6 });
     const processor = new TransferProcessor();
     await processor.processEvent(makeInitiation());
-    expect(mockCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ asset: 'USDC' }) }),
+    expect(mockUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ create: expect.objectContaining({ asset: 'USDC' }) }),
     );
   });
 
@@ -175,8 +175,8 @@ describe('handleInitiation — token enrichment', () => {
     mockGetTokenInfo.mockReturnValue(null);
     const processor = new TransferProcessor();
     await processor.processEvent(makeInitiation({ tokenAddress: UNKNOWN_TOKEN }));
-    expect(mockCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ asset: UNKNOWN_TOKEN }) }),
+    expect(mockUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ create: expect.objectContaining({ asset: UNKNOWN_TOKEN }) }),
     );
   });
 
@@ -185,8 +185,8 @@ describe('handleInitiation — token enrichment', () => {
     mockGetTokenInfo.mockReturnValue({ symbol: 'USDT', rawSymbol: 'USD₮0', decimals: 6 });
     const processor = new TransferProcessor();
     await processor.processEvent(makeInitiation({ tokenAddress: USDT_ARB }));
-    expect(mockCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ assetRaw: 'USD₮0' }) }),
+    expect(mockUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ create: expect.objectContaining({ assetRaw: 'USD₮0' }) }),
     );
   });
 
@@ -194,8 +194,8 @@ describe('handleInitiation — token enrichment', () => {
     mockGetTokenInfo.mockReturnValue({ symbol: 'USDC', decimals: 6 }); // no rawSymbol
     const processor = new TransferProcessor();
     await processor.processEvent(makeInitiation());
-    expect(mockCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ assetRaw: null }) }),
+    expect(mockUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ create: expect.objectContaining({ assetRaw: null }) }),
     );
   });
 
@@ -203,8 +203,8 @@ describe('handleInitiation — token enrichment', () => {
     mockGetTokenInfo.mockReturnValue(null);
     const processor = new TransferProcessor();
     await processor.processEvent(makeInitiation({ tokenAddress: UNKNOWN_TOKEN }));
-    expect(mockCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ assetRaw: null }) }),
+    expect(mockUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ create: expect.objectContaining({ assetRaw: null }) }),
     );
   });
 
@@ -236,6 +236,29 @@ describe('handleInitiation — USD calculation', () => {
     expect(mockGetPrice).toHaveBeenCalledWith('USDC');
   });
 
+  it('stores the transfer with amountUsd=null when price service throws', async () => {
+    // A price service outage must not drop the transfer — the DB write must
+    // still happen, with amountUsd=null as the fallback (price unknown).
+    mockGetPrice.mockRejectedValue(new Error('CoinGecko rate limit'));
+    const consoleSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const processor = new TransferProcessor();
+    await processor.processEvent(makeInitiation());
+    expect(mockUpsert).toHaveBeenCalledTimes(1);
+    expect(mockUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ create: expect.objectContaining({ amountUsd: null }) }),
+    );
+    consoleSpy.mockRestore();
+  });
+
+  it('publishes to Redis even when price service throws', async () => {
+    mockGetPrice.mockRejectedValue(new Error('CoinGecko timeout'));
+    const consoleSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const processor = new TransferProcessor();
+    await processor.processEvent(makeInitiation());
+    expect(mockPublish).toHaveBeenCalledTimes(1);
+    consoleSpy.mockRestore();
+  });
+
   it('calls priceService.getPrice with the tokenAddress when token is unknown', async () => {
     mockGetTokenInfo.mockReturnValue(null);
     const processor = new TransferProcessor();
@@ -248,8 +271,8 @@ describe('handleInitiation — USD calculation', () => {
     mockGetPrice.mockResolvedValue(1.0);
     const processor = new TransferProcessor();
     await processor.processEvent(makeInitiation());
-    expect(mockCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ amountUsd: 10.0 }) }),
+    expect(mockUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ create: expect.objectContaining({ amountUsd: 10.0 }) }),
     );
   });
 
@@ -257,8 +280,8 @@ describe('handleInitiation — USD calculation', () => {
     mockGetPrice.mockResolvedValue(0);
     const processor = new TransferProcessor();
     await processor.processEvent(makeInitiation());
-    expect(mockCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ amountUsd: null }) }),
+    expect(mockUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ create: expect.objectContaining({ amountUsd: null }) }),
     );
   });
 
@@ -269,9 +292,9 @@ describe('handleInitiation — USD calculation', () => {
     mockGetPrice.mockResolvedValue(1.0);
     const processor = new TransferProcessor();
     await processor.processEvent(makeInitiation({ amount: 0n }));
-    expect(mockCreate).toHaveBeenCalledWith(
+    expect(mockUpsert).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ amountUsd: 0, transferSizeBucket: null }),
+        create: expect.objectContaining({ amountUsd: 0, transferSizeBucket: null }),
       }),
     );
   });
@@ -282,8 +305,8 @@ describe('handleInitiation — USD calculation', () => {
     mockGetPrice.mockResolvedValue(3000);
     const processor = new TransferProcessor();
     await processor.processEvent(makeInitiation());
-    expect(mockCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ amountUsd: 7500 }) }),
+    expect(mockUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ create: expect.objectContaining({ amountUsd: 7500 }) }),
     );
   });
 
@@ -292,8 +315,8 @@ describe('handleInitiation — USD calculation', () => {
     mockGetPrice.mockResolvedValue(1.0); // $100
     const processor = new TransferProcessor();
     await processor.processEvent(makeInitiation());
-    expect(mockCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ transferSizeBucket: 'small' }) }),
+    expect(mockUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ create: expect.objectContaining({ transferSizeBucket: 'small' }) }),
     );
   });
 
@@ -302,8 +325,8 @@ describe('handleInitiation — USD calculation', () => {
     mockGetPrice.mockResolvedValue(1.0);
     const processor = new TransferProcessor();
     await processor.processEvent(makeInitiation());
-    expect(mockCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ transferSizeBucket: 'medium' }) }),
+    expect(mockUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ create: expect.objectContaining({ transferSizeBucket: 'medium' }) }),
     );
   });
 
@@ -312,8 +335,8 @@ describe('handleInitiation — USD calculation', () => {
     mockGetPrice.mockResolvedValue(1.0);
     const processor = new TransferProcessor();
     await processor.processEvent(makeInitiation());
-    expect(mockCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ transferSizeBucket: 'large' }) }),
+    expect(mockUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ create: expect.objectContaining({ transferSizeBucket: 'large' }) }),
     );
   });
 
@@ -322,8 +345,8 @@ describe('handleInitiation — USD calculation', () => {
     mockGetPrice.mockResolvedValue(1.0);
     const processor = new TransferProcessor();
     await processor.processEvent(makeInitiation());
-    expect(mockCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ transferSizeBucket: 'whale' }) }),
+    expect(mockUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ create: expect.objectContaining({ transferSizeBucket: 'whale' }) }),
     );
   });
 
@@ -331,8 +354,8 @@ describe('handleInitiation — USD calculation', () => {
     mockGetPrice.mockResolvedValue(0);
     const processor = new TransferProcessor();
     await processor.processEvent(makeInitiation());
-    expect(mockCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ transferSizeBucket: null }) }),
+    expect(mockUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ create: expect.objectContaining({ transferSizeBucket: null }) }),
     );
   });
 });
@@ -345,8 +368,8 @@ describe('handleInitiation — DB record fields', () => {
   it('creates a transfer with status "pending"', async () => {
     const processor = new TransferProcessor();
     await processor.processEvent(makeInitiation());
-    expect(mockCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ status: 'pending' }) }),
+    expect(mockUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ create: expect.objectContaining({ status: 'pending' }) }),
     );
   });
 
@@ -354,8 +377,8 @@ describe('handleInitiation — DB record fields', () => {
     const processor = new TransferProcessor();
     const event = makeInitiation({ amount: 10_000_000n });
     await processor.processEvent(event);
-    expect(mockCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ amount: '10000000' }) }),
+    expect(mockUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ create: expect.objectContaining({ amount: '10000000' }) }),
     );
   });
 
@@ -363,8 +386,8 @@ describe('handleInitiation — DB record fields', () => {
     const processor = new TransferProcessor();
     const event = makeInitiation();
     await processor.processEvent(event);
-    expect(mockCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ txHashSource: event.txHash }) }),
+    expect(mockUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ create: expect.objectContaining({ txHashSource: event.txHash }) }),
     );
   });
 
@@ -372,16 +395,16 @@ describe('handleInitiation — DB record fields', () => {
     const processor = new TransferProcessor();
     const event = makeInitiation({ blockNumber: 19_999_999n });
     await processor.processEvent(event);
-    expect(mockCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ blockInitiated: 19_999_999n }) }),
+    expect(mockUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ create: expect.objectContaining({ blockInitiated: 19_999_999n }) }),
     );
   });
 
   it('stores the correct initiatedAt timestamp', async () => {
     const processor = new TransferProcessor();
     await processor.processEvent(makeInitiation());
-    expect(mockCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ initiatedAt: INITIATION_TIMESTAMP }) }),
+    expect(mockUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ create: expect.objectContaining({ initiatedAt: INITIATION_TIMESTAMP }) }),
     );
   });
 
@@ -389,8 +412,8 @@ describe('handleInitiation — DB record fields', () => {
     // INITIATION_TIMESTAMP = 2026-01-01T12:00:00Z → hour = 12
     const processor = new TransferProcessor();
     await processor.processEvent(makeInitiation());
-    expect(mockCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ hourOfDay: 12 }) }),
+    expect(mockUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ create: expect.objectContaining({ hourOfDay: 12 }) }),
     );
   });
 
@@ -398,16 +421,16 @@ describe('handleInitiation — DB record fields', () => {
     // 2026-01-01 is a Thursday (day 4)
     const processor = new TransferProcessor();
     await processor.processEvent(makeInitiation());
-    expect(mockCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ dayOfWeek: 4 }) }),
+    expect(mockUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ create: expect.objectContaining({ dayOfWeek: 4 }) }),
     );
   });
 
   it('stores gasPriceGwei as null', async () => {
     const processor = new TransferProcessor();
     await processor.processEvent(makeInitiation());
-    expect(mockCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ gasPriceGwei: null }) }),
+    expect(mockUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ create: expect.objectContaining({ gasPriceGwei: null }) }),
     );
   });
 
@@ -415,15 +438,31 @@ describe('handleInitiation — DB record fields', () => {
     const processor = new TransferProcessor();
     const event = makeInitiation();
     await processor.processEvent(event);
-    expect(mockCreate).toHaveBeenCalledWith(
+    expect(mockUpsert).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({
+        create: expect.objectContaining({
           transferId: 'test-transfer-1',
           bridge: 'across',
           sourceChain: 'ethereum',
           destChain: 'arbitrum',
         }),
       }),
+    );
+  });
+
+  it('upsert where clause uses transferId', async () => {
+    const processor = new TransferProcessor();
+    await processor.processEvent(makeInitiation());
+    expect(mockUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { transferId: 'test-transfer-1' } }),
+    );
+  });
+
+  it('upsert update block is empty (duplicate initiation is a no-op)', async () => {
+    const processor = new TransferProcessor();
+    await processor.processEvent(makeInitiation());
+    expect(mockUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ update: {} }),
     );
   });
 });
@@ -627,6 +666,103 @@ describe('handleCompletion — orphaned (no initiation found)', () => {
     await processor.processEvent(makeCompletion());
     expect(mockPublish).not.toHaveBeenCalled();
     consoleSpy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// durationSeconds precision
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// clearPending
+// ---------------------------------------------------------------------------
+
+describe('clearPending', () => {
+  it('removes a single entry from pendingTransfers so the slow path is used on completion', async () => {
+    const processor = new TransferProcessor();
+    await processor.processEvent(makeInitiation({ transferId: 'id-clear' }));
+
+    processor.clearPending('id-clear');
+
+    // Now a completion must fall through to the slow path (DB lookup)
+    mockFindUnique.mockResolvedValue({ initiatedAt: INITIATION_TIMESTAMP });
+    await processor.processEvent(makeCompletion({ transferId: 'id-clear' }));
+    expect(mockFindUnique).toHaveBeenCalledTimes(1);
+  });
+
+  it('is a no-op for a transferId that was never registered', () => {
+    const processor = new TransferProcessor();
+    expect(() => processor.clearPending('non-existent')).not.toThrow();
+  });
+
+  it('does not affect other entries in pendingTransfers', async () => {
+    const processor = new TransferProcessor();
+    await processor.processEvent(makeInitiation({ transferId: 'keep' }));
+    await processor.processEvent(makeInitiation({ transferId: 'remove' }));
+
+    processor.clearPending('remove');
+
+    // 'keep' is still in memory — its completion should not hit the DB
+    await processor.processEvent(makeCompletion({ transferId: 'keep' }));
+    expect(mockFindUnique).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// pruneStalePending
+// ---------------------------------------------------------------------------
+
+describe('pruneStalePending', () => {
+  it('returns 0 when pendingTransfers is empty', () => {
+    const processor = new TransferProcessor();
+    expect(processor.pruneStalePending(60_000)).toBe(0);
+  });
+
+  it('returns 0 when no entries are older than maxAgeMs', async () => {
+    const processor = new TransferProcessor();
+    await processor.processEvent(makeInitiation({ transferId: 'fresh' }));
+    // maxAgeMs = 1 hour — nothing is that old
+    expect(processor.pruneStalePending(3_600_000)).toBe(0);
+  });
+
+  it('evicts entries whose insertedAt is older than cutoff and returns the count', async () => {
+    // Pin insertedAt to t=1000 so real Date.now() is guaranteed to be greater.
+    const dateSpy = jest.spyOn(Date, 'now').mockReturnValue(1000);
+    const processor = new TransferProcessor();
+    await processor.processEvent(makeInitiation({ transferId: 'stale-1' }));
+    await processor.processEvent(makeInitiation({ transferId: 'stale-2' }));
+    dateSpy.mockRestore();
+
+    // maxAgeMs = 0: cutoff = real Date.now() >> 1000, both entries are stale
+    const evicted = processor.pruneStalePending(0);
+    expect(evicted).toBe(2);
+  });
+
+  it('evicted entries fall through to the slow path on completion', async () => {
+    const dateSpy = jest.spyOn(Date, 'now').mockReturnValue(1000);
+    const processor = new TransferProcessor();
+    await processor.processEvent(makeInitiation({ transferId: 'to-prune' }));
+    dateSpy.mockRestore();
+
+    processor.pruneStalePending(0); // evict all (insertedAt=1000 < real now)
+
+    mockFindUnique.mockResolvedValue({ initiatedAt: INITIATION_TIMESTAMP });
+    await processor.processEvent(makeCompletion({ transferId: 'to-prune' }));
+    expect(mockFindUnique).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not evict entries younger than maxAgeMs', async () => {
+    const processor = new TransferProcessor();
+    await processor.processEvent(makeInitiation({ transferId: 'fresh-1' }));
+    await processor.processEvent(makeInitiation({ transferId: 'fresh-2' }));
+
+    // maxAgeMs = 1 hour; entries were just inserted — none should be evicted
+    expect(processor.pruneStalePending(3_600_000)).toBe(0);
+
+    // Both completions should still use the fast path
+    await processor.processEvent(makeCompletion({ transferId: 'fresh-1' }));
+    await processor.processEvent(makeCompletion({ transferId: 'fresh-2' }));
+    expect(mockFindUnique).not.toHaveBeenCalled();
   });
 });
 

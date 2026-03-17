@@ -25,6 +25,9 @@
 const mockPublish = jest.fn().mockResolvedValue(undefined);
 const mockRedisInstance = { publish: jest.fn() };
 
+/** Injected into CCTPScout in place of TransferProcessor.processEvent */
+const mockOnEvent = jest.fn().mockResolvedValue(undefined);
+
 const mockContractOn = jest.fn();
 const mockContractOff = jest.fn();
 
@@ -66,7 +69,6 @@ import {
   CCTP_TOKEN_MESSENGER_ADDRESSES,
   CCTP_DOMAINS,
   CHAIN_IDS,
-  REDIS_CHANNELS,
 } from '../../../src/lib/constants';
 
 // ---------------------------------------------------------------------------
@@ -196,6 +198,7 @@ async function invokeListener(eventName: string, log: Log): Promise<void> {
 
 beforeEach(() => {
   mockPublish.mockClear();
+  mockOnEvent.mockClear();
   mockGetProvider.mockClear();
   mockContractOn.mockClear();
   mockContractOff.mockClear();
@@ -208,14 +211,14 @@ beforeEach(() => {
 
 describe('constructor', () => {
   it('scouts exactly the 5 CCTP chains (ethereum, arbitrum, optimism, base, avalanche)', () => {
-    const scout = new CCTPScout();
+    const scout = new CCTPScout(mockOnEvent);
     expect((scout as any).chains).toEqual([
       'ethereum', 'arbitrum', 'optimism', 'base', 'avalanche',
     ]);
   });
 
   it('isRunning starts as false', () => {
-    const scout = new CCTPScout();
+    const scout = new CCTPScout(mockOnEvent);
     expect((scout as any).isRunning).toBe(false);
   });
 });
@@ -225,7 +228,7 @@ describe('constructor', () => {
 // ---------------------------------------------------------------------------
 
 describe('getContractAddress', () => {
-  const scout = new CCTPScout();
+  const scout = new CCTPScout(mockOnEvent);
 
   it('returns the correct TokenMessenger address for ethereum', () => {
     expect(scout.getContractAddress('ethereum')).toBe(CCTP_TOKEN_MESSENGER_ADDRESSES.ethereum);
@@ -257,7 +260,7 @@ describe('getContractAddress', () => {
 // ---------------------------------------------------------------------------
 
 describe('parseDepositEvent', () => {
-  const scout = new CCTPScout();
+  const scout = new CCTPScout(mockOnEvent);
 
   describe('happy path — ETH → ARB deposit', () => {
     const log = encodeDepositLog();
@@ -370,7 +373,7 @@ describe('parseDepositEvent', () => {
 // ---------------------------------------------------------------------------
 
 describe('parseFillEvent', () => {
-  const scout = new CCTPScout();
+  const scout = new CCTPScout(mockOnEvent);
 
   describe('happy path — fill observed on ARB, originated from ETH', () => {
     // chainId = 42161 (Arbitrum, where we're listening for MessageReceived)
@@ -420,7 +423,7 @@ describe('parseFillEvent', () => {
 
   describe('sentinel values — MessageReceived does not carry burnToken or amount', () => {
     const log = encodeMessageReceivedLog();
-    const result = new CCTPScout().parseFillEvent(log, CHAIN_IDS.arbitrum, TEST_TIMESTAMP);
+    const result = new CCTPScout(mockOnEvent).parseFillEvent(log, CHAIN_IDS.arbitrum, TEST_TIMESTAMP);
 
     it('tokenAddress is the zero address sentinel (docs/DATA-MODEL.md §13.1)', () => {
       expect(result!.tokenAddress).toBe(ZERO_ADDR);
@@ -434,12 +437,12 @@ describe('parseFillEvent', () => {
   describe('null cases', () => {
     it('returns null when sourceDomain is not a recognised CCTP domain', () => {
       const log = encodeMessageReceivedLog({ sourceDomain: 99 });
-      expect(new CCTPScout().parseFillEvent(log, CHAIN_IDS.arbitrum, TEST_TIMESTAMP)).toBeNull();
+      expect(new CCTPScout(mockOnEvent).parseFillEvent(log, CHAIN_IDS.arbitrum, TEST_TIMESTAMP)).toBeNull();
     });
 
     it('returns null when passed a DepositForBurn log (wrong event name)', () => {
       const depositLog = encodeDepositLog();
-      expect(new CCTPScout().parseFillEvent(depositLog, CHAIN_IDS.ethereum, TEST_TIMESTAMP)).toBeNull();
+      expect(new CCTPScout(mockOnEvent).parseFillEvent(depositLog, CHAIN_IDS.ethereum, TEST_TIMESTAMP)).toBeNull();
     });
 
     it('returns null for a completely malformed log', () => {
@@ -454,7 +457,7 @@ describe('parseFillEvent', () => {
         topics: [],
         data: '0x',
       } as unknown as Log;
-      expect(new CCTPScout().parseFillEvent(badLog, CHAIN_IDS.arbitrum, TEST_TIMESTAMP)).toBeNull();
+      expect(new CCTPScout(mockOnEvent).parseFillEvent(badLog, CHAIN_IDS.arbitrum, TEST_TIMESTAMP)).toBeNull();
     });
   });
 });
@@ -464,7 +467,7 @@ describe('parseFillEvent', () => {
 // ---------------------------------------------------------------------------
 
 describe('transferId consistency', () => {
-  const scout = new CCTPScout();
+  const scout = new CCTPScout(mockOnEvent);
 
   it('DepositForBurn on Ethereum and MessageReceived on Arbitrum produce the same transferId', () => {
     const depositLog = encodeDepositLog({
@@ -523,7 +526,7 @@ describe('start', () => {
   let scout: CCTPScout;
 
   beforeEach(async () => {
-    scout = new CCTPScout();
+    scout = new CCTPScout(mockOnEvent);
     await scout.start();
   });
 
@@ -566,7 +569,7 @@ describe('stop', () => {
   let scout: CCTPScout;
 
   beforeEach(async () => {
-    scout = new CCTPScout();
+    scout = new CCTPScout(mockOnEvent);
     await scout.start();
     await scout.stop();
   });
@@ -608,19 +611,18 @@ describe('deposit listener', () => {
   let scout: CCTPScout;
 
   beforeEach(async () => {
-    scout = new CCTPScout();
+    scout = new CCTPScout(mockOnEvent);
     await scout.start();
   });
 
-  it('emits to transfer:initiated channel when a valid DepositForBurn is observed', async () => {
+  it('calls onEvent with an initiation event when a valid DepositForBurn is observed', async () => {
     mockGetBlock.mockResolvedValue({ timestamp: BLOCK_TIMESTAMP_SECONDS });
     const log = encodeDepositLog();
 
     await invokeListener('DepositForBurn', log);
 
-    expect(mockPublish).toHaveBeenCalledTimes(1);
-    expect(mockPublish).toHaveBeenCalledWith(
-      REDIS_CHANNELS.TRANSFER_INITIATED,
+    expect(mockOnEvent).toHaveBeenCalledTimes(1);
+    expect(mockOnEvent).toHaveBeenCalledWith(
       expect.objectContaining({ bridge: 'cctp', type: 'initiation' }),
     );
   });
@@ -631,7 +633,7 @@ describe('deposit listener', () => {
 
     await invokeListener('DepositForBurn', log);
 
-    const emittedEvent = mockPublish.mock.calls[0][1];
+    const emittedEvent = mockOnEvent.mock.calls[0][0];
     expect(emittedEvent.timestamp).toEqual(new Date(BLOCK_TIMESTAMP_SECONDS * 1000));
   });
 
@@ -643,19 +645,19 @@ describe('deposit listener', () => {
     await invokeListener('DepositForBurn', log);
 
     const after = new Date();
-    const emittedTimestamp: Date = mockPublish.mock.calls[0][1].timestamp;
+    const emittedTimestamp: Date = mockOnEvent.mock.calls[0][0].timestamp;
     expect(emittedTimestamp.getTime()).toBeGreaterThanOrEqual(before.getTime());
     expect(emittedTimestamp.getTime()).toBeLessThanOrEqual(after.getTime());
   });
 
-  it('does NOT emit when getBlock throws (logs error, swallows exception)', async () => {
+  it('does NOT call onEvent when getBlock throws (logs error, swallows exception)', async () => {
     mockGetBlock.mockRejectedValue(new Error('RPC timeout'));
     const log = encodeDepositLog();
     const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
 
     await invokeListener('DepositForBurn', log);
 
-    expect(mockPublish).not.toHaveBeenCalled();
+    expect(mockOnEvent).not.toHaveBeenCalled();
     consoleSpy.mockRestore();
   });
 });
@@ -668,30 +670,29 @@ describe('fill listener', () => {
   let scout: CCTPScout;
 
   beforeEach(async () => {
-    scout = new CCTPScout();
+    scout = new CCTPScout(mockOnEvent);
     await scout.start();
   });
 
-  it('emits to transfer:completed channel when a valid MessageReceived is observed', async () => {
+  it('calls onEvent with a completion event when a valid MessageReceived is observed', async () => {
     mockGetBlock.mockResolvedValue({ timestamp: BLOCK_TIMESTAMP_SECONDS });
     const log = encodeMessageReceivedLog();
 
     await invokeListener('MessageReceived', log);
 
-    expect(mockPublish).toHaveBeenCalledTimes(1);
-    expect(mockPublish).toHaveBeenCalledWith(
-      REDIS_CHANNELS.TRANSFER_COMPLETED,
+    expect(mockOnEvent).toHaveBeenCalledTimes(1);
+    expect(mockOnEvent).toHaveBeenCalledWith(
       expect.objectContaining({ bridge: 'cctp', type: 'completion' }),
     );
   });
 
-  it('emitted completion event carries sentinel tokenAddress and amount', async () => {
+  it('completion event carries sentinel tokenAddress and amount', async () => {
     mockGetBlock.mockResolvedValue({ timestamp: BLOCK_TIMESTAMP_SECONDS });
     const log = encodeMessageReceivedLog();
 
     await invokeListener('MessageReceived', log);
 
-    const emittedEvent = mockPublish.mock.calls[0][1];
+    const emittedEvent = mockOnEvent.mock.calls[0][0];
     expect(emittedEvent.tokenAddress).toBe(ZERO_ADDR);
     expect(emittedEvent.amount).toBe(0n);
   });
@@ -702,7 +703,7 @@ describe('fill listener', () => {
 
     await invokeListener('MessageReceived', log);
 
-    const emittedEvent = mockPublish.mock.calls[0][1];
+    const emittedEvent = mockOnEvent.mock.calls[0][0];
     expect(emittedEvent.timestamp).toEqual(new Date(BLOCK_TIMESTAMP_SECONDS * 1000));
   });
 
@@ -714,19 +715,19 @@ describe('fill listener', () => {
     await invokeListener('MessageReceived', log);
 
     const after = new Date();
-    const emittedTimestamp: Date = mockPublish.mock.calls[0][1].timestamp;
+    const emittedTimestamp: Date = mockOnEvent.mock.calls[0][0].timestamp;
     expect(emittedTimestamp.getTime()).toBeGreaterThanOrEqual(before.getTime());
     expect(emittedTimestamp.getTime()).toBeLessThanOrEqual(after.getTime());
   });
 
-  it('does NOT emit when getBlock throws (logs error, swallows exception)', async () => {
+  it('does NOT call onEvent when getBlock throws (logs error, swallows exception)', async () => {
     mockGetBlock.mockRejectedValue(new Error('RPC timeout'));
     const log = encodeMessageReceivedLog();
     const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
 
     await invokeListener('MessageReceived', log);
 
-    expect(mockPublish).not.toHaveBeenCalled();
+    expect(mockOnEvent).not.toHaveBeenCalled();
     consoleSpy.mockRestore();
   });
 });

@@ -90,8 +90,8 @@ const POOL_IFACE = new Interface(POOL_ABI);
 // ---------------------------------------------------------------------------
 
 export class StargateScout extends BaseScout {
-  constructor() {
-    super(STARGATE_SCOUT_CHAINS);
+  constructor(onEvent: (event: import('../types').TransferEvent) => Promise<void>) {
+    super(STARGATE_SCOUT_CHAINS, onEvent);
     // Log once at construction — not per event — to avoid log spam.
     console.warn(
       '[StargateScout] parseFillEvent is a no-op in Phase 0. ' +

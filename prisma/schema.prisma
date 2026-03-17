@@ -6,34 +6,71 @@ datasource db {
   provider = "postgresql"
 }
 
+// ---------------------------------------------------------------------------
+// Enums — DB-enforced constraints matching the union types in src/types/index.ts
+// ---------------------------------------------------------------------------
+
+enum TransferStatus {
+  pending
+  completed
+  stuck
+  failed
+}
+
+enum BridgeName {
+  across
+  cctp
+  stargate
+}
+
+enum TransferSizeBucket {
+  small
+  medium
+  large
+  whale
+}
+
+enum Severity {
+  low
+  medium
+  high
+}
+
+enum AnomalyType {
+  latency_spike
+  failure_cluster
+  liquidity_drop
+  stuck_transfer
+}
+
 // ─── Transfer ────────────────────────────────────────────────────────────────
 // One row per bridge transfer event, written on initiation and updated on
 // completion. transfer_id is bridge-scoped and unique across all bridges.
 
 model Transfer {
-  id                 BigInt    @id @default(autoincrement())
-  transferId         String    @unique @map("transfer_id")
-  bridge             String
-  sourceChain        String    @map("source_chain")
-  destChain          String    @map("dest_chain")
+  id                 BigInt              @id @default(autoincrement())
+  transferId         String              @unique @map("transfer_id")
+  bridge             BridgeName
+  sourceChain        String              @map("source_chain")
+  destChain          String              @map("dest_chain")
   asset              String
-  assetRaw           String?   @map("asset_raw")
+  assetRaw           String?             @map("asset_raw")
   amount             Decimal
-  amountUsd          Decimal?  @map("amount_usd")
-  initiatedAt        DateTime  @map("initiated_at")
-  completedAt        DateTime? @map("completed_at")
-  durationSeconds    Int?      @map("duration_seconds")
-  status             String    @default("pending")
-  txHashSource       String?   @map("tx_hash_source")
-  txHashDest         String?   @map("tx_hash_dest")
-  blockInitiated     BigInt?   @map("block_initiated")
-  blockCompleted     BigInt?   @map("block_completed")
+  amountUsd          Decimal?            @map("amount_usd")
+  initiatedAt        DateTime            @map("initiated_at")
+  completedAt        DateTime?           @map("completed_at")
+  durationSeconds    Int?                @map("duration_seconds")
+  status             TransferStatus      @default(pending)
+  txHashSource       String?             @map("tx_hash_source")
+  txHashDest         String?             @map("tx_hash_dest")
+  blockInitiated     BigInt?             @map("block_initiated")
+  blockCompleted     BigInt?             @map("block_completed")
 
   // Structural data — collected now for future analytics
-  gasPriceGwei       Decimal?  @map("gas_price_gwei")
-  transferSizeBucket String?   @map("transfer_size_bucket")
-  hourOfDay          Int?      @map("hour_of_day")
-  dayOfWeek          Int?      @map("day_of_week")
+  gasPriceGwei       Decimal?            @map("gas_price_gwei")
+  transferSizeBucket TransferSizeBucket? @map("transfer_size_bucket")
+  hourOfDay          Int?                @map("hour_of_day")
+  dayOfWeek          Int?                @map("day_of_week")
 
   createdAt          DateTime  @default(now()) @map("created_at")
   updatedAt          DateTime  @updatedAt @map("updated_at")
@@ -51,9 +88,13 @@ model Transfer {
 // by the pool-snapshots job.
 
 model PoolSnapshot {
-  id                 BigInt   @id @default(autoincrement())
-  poolId             String   @map("pool_id")
-  bridge             String
+  id                 BigInt     @id @default(autoincrement())
+  poolId             String     @map("pool_id")
+  bridge             BridgeName
+  // chain is a free-form String rather than an enum because PoolProcessor writes
+  // the sentinel value 'ethereum_hub' for HubPool aggregate rows — a value that
+  // does not correspond to any real ChainName. Partial indexes (WHERE chain = ...)
+  // are the recommended guard; see docs/AUDIT.md for the trade-off.
   chain              String
   asset              String
   tvl                Decimal
@@ -72,13 +113,13 @@ model PoolSnapshot {
 // IS NULL) until the anomaly-detector marks it resolved.
 
 model Anomaly {
-  id          BigInt    @id @default(autoincrement())
-  anomalyType String    @map("anomaly_type")
-  corridorId  String    @map("corridor_id")
-  bridge      String
-  sourceChain String?   @map("source_chain")
-  destChain   String?   @map("dest_chain")
-  severity    String
+  id          BigInt      @id @default(autoincrement())
+  anomalyType AnomalyType @map("anomaly_type")
+  corridorId  String      @map("corridor_id")
+  bridge      BridgeName
+  sourceChain String?     @map("source_chain")
+  destChain   String?     @map("dest_chain")
+  severity    Severity
   detectedAt  DateTime  @map("detected_at")
   resolvedAt  DateTime? @map("resolved_at")
   details     Json?

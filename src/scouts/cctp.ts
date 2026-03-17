@@ -89,8 +89,8 @@ const MESSAGE_TRANSMITTER_IFACE = new Interface(MESSAGE_TRANSMITTER_ABI);
 // ---------------------------------------------------------------------------
 
 export class CCTPScout extends BaseScout {
-  constructor() {
-    super(CCTP_SCOUT_CHAINS);
+  constructor(onEvent: (event: import('../types').TransferEvent) => Promise<void>) {
+    super(CCTP_SCOUT_CHAINS, onEvent);
   }
 
   // ---------------------------------------------------------------------------
@@ -152,11 +152,7 @@ export class CCTPScout extends BaseScout {
         const payload = args[args.length - 1] as { log: Log };
         const log = payload.log;
         try {
-          const block = await provider.getBlock(log.blockNumber);
-          const timestamp = block !== null
-            ? new Date(block.timestamp * 1000)
-            : new Date();
-
+          const timestamp = await this.getBlockTimestamp(provider, chainId, log.blockNumber);
           const event = this.parseDepositEvent(log, chainId, timestamp);
           if (event !== null) {
             await this.emit(event);
@@ -196,11 +192,7 @@ export class CCTPScout extends BaseScout {
         const payload = args[args.length - 1] as { log: Log };
         const log = payload.log;
         try {
-          const block = await provider.getBlock(log.blockNumber);
-          const timestamp = block !== null
-            ? new Date(block.timestamp * 1000)
-            : new Date();
-
+          const timestamp = await this.getBlockTimestamp(provider, chainId, log.blockNumber);
           const event = this.parseFillEvent(log, chainId, timestamp);
           if (event !== null) {
             await this.emit(event);

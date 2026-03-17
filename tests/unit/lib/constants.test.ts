@@ -201,8 +201,8 @@ describe('ACROSS_SPOKEPOOL_ADDRESSES', () => {
     expect(new Set(addresses).size).toBe(addresses.length);
   });
 
-  it('does not include a polygon address (not in spec)', () => {
-    expect(ACROSS_SPOKEPOOL_ADDRESSES.polygon).toBeUndefined();
+  it('includes a polygon address', () => {
+    expect(ACROSS_SPOKEPOOL_ADDRESSES.polygon).toMatch(ADDRESS_REGEX);
   });
 });
 
@@ -211,16 +211,14 @@ describe('ACROSS_SPOKEPOOL_ADDRESSES', () => {
 // ---------------------------------------------------------------------------
 
 describe('STUCK_THRESHOLDS_SECONDS', () => {
-  it('has the correct threshold for each protocol', () => {
+  it('has the correct threshold for each supported bridge', () => {
     expect(STUCK_THRESHOLDS_SECONDS['across']).toBe(1800);   // 30 min
     expect(STUCK_THRESHOLDS_SECONDS['cctp']).toBe(2700);     // 45 min
     expect(STUCK_THRESHOLDS_SECONDS['stargate']).toBe(1800); // 30 min
-    expect(STUCK_THRESHOLDS_SECONDS['wormhole']).toBe(3600); // 60 min
-    expect(STUCK_THRESHOLDS_SECONDS['layerzero']).toBe(1800);// 30 min
   });
 
-  it('covers all 5 protocols', () => {
-    expect(Object.keys(STUCK_THRESHOLDS_SECONDS)).toHaveLength(5);
+  it('covers exactly the 3 supported bridges', () => {
+    expect(Object.keys(STUCK_THRESHOLDS_SECONDS)).toHaveLength(3);
   });
 
   it('all thresholds are positive integers', () => {
@@ -236,9 +234,9 @@ describe('STUCK_THRESHOLDS_SECONDS', () => {
     );
   });
 
-  it('wormhole has the longest threshold overall', () => {
+  it('cctp has the longest threshold overall', () => {
     const max = Math.max(...Object.values(STUCK_THRESHOLDS_SECONDS));
-    expect(STUCK_THRESHOLDS_SECONDS['wormhole']).toBe(max);
+    expect(STUCK_THRESHOLDS_SECONDS['cctp']).toBe(max);
   });
 });
 

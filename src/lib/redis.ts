@@ -50,7 +50,23 @@ export async function publish(channel: RedisChannel, message: unknown): Promise<
 }
 
 /**
+ * Per-channel message handlers. A single top-level 'message' listener on
+ * redisSubscriber dispatches to the correct handler, preventing listener
+ * accumulation when subscribe() is called multiple times for the same channel
+ * (e.g. during Next.js hot-reload in development).
+ */
+const channelHandlers = new Map<string, (raw: string) => void>();
+
+// Register the single top-level dispatcher exactly once at module load.
+redisSubscriber.on('message', (receivedChannel: string, raw: string) => {
+  channelHandlers.get(receivedChannel)?.(raw);
+});
+
+/**
  * Subscribe to a Redis channel and invoke `handler` for each message.
+ *
+ * Safe to call multiple times for the same channel — subsequent calls replace
+ * the handler (last-write-wins) without accumulating duplicate listeners.
  *
  * Uses superjson for deserialisation so bigint and Date values are restored
  * to their original types before being passed to the handler.
@@ -59,9 +75,8 @@ export async function subscribe<T = unknown>(
   channel: RedisChannel,
   handler: (message: T) => void,
 ): Promise<void> {
-  await redisSubscriber.subscribe(channel);
-  redisSubscriber.on('message', (receivedChannel: string, raw: string) => {
-    if (receivedChannel !== channel) return;
-    handler(superjson.parse<T>(raw));
-  });
+  if (!channelHandlers.has(channel)) {
+    await redisSubscriber.subscribe(channel);
+  }
+  channelHandlers.set(channel, (raw: string) => handler(superjson.parse<T>(raw)));
 }

@@ -36,14 +36,17 @@ import { Contract } from 'ethers';
 
 import { db } from '../lib/db';
 import { getProvider } from '../lib/rpc';
+import { publish } from '../lib/redis';
 import { priceService } from '../lib/price-service';
 import { TOKEN_REGISTRY, normalizeAmount } from '../lib/token-registry';
 import {
   CHAIN_IDS,
+  REDIS_CHANNELS,
   SUPPORTED_ASSETS,
   ACROSS_SPOKEPOOL_ADDRESSES,
   ACROSS_HUBPOOL_ADDRESS,
   BRIDGE_CHAINS,
+  type BridgeName,
   type ChainName,
 } from '../lib/constants';
 
@@ -87,7 +90,7 @@ const HUBPOOL_CHAIN_KEY = 'ethereum_hub';
 
 interface PoolSnapshotInput {
   poolId: string;
-  bridge: string;
+  bridge: BridgeName;
   chain: string;
   asset: string;
   /** Human-readable float (raw bigint already normalised by token decimals). */
@@ -220,11 +223,12 @@ export class PoolProcessor {
         const liquid = raw.liquidReserves;
         const total = utilized + liquid;
 
+        // Skip uninitialised / empty pools — a zero-TVL HubPool row carries no
+        // signal and would distort aggregate utilization queries.
         if (total === 0n) continue;
 
         const tvl = normalizeAmount(total, tokenInfo.decimals);
         const available = normalizeAmount(liquid, tokenInfo.decimals);
-        // Integer arithmetic preserves precision; converts basis points → percentage
         const utilization = Number(utilized * 10_000n / total) / 100;
 
         results.push({
@@ -287,7 +291,12 @@ export class PoolProcessor {
 
     // One price call per unique symbol — priceService caches results for 5 min
     const uniqueAssets = [...new Set(snapshots.map((s) => s.asset))];
-    const prices = await priceService.getPrices(uniqueAssets);
+    let prices: Record<string, number> = {};
+    try {
+      prices = await priceService.getPrices(uniqueAssets);
+    } catch (error) {
+      console.warn('[PoolProcessor] Price fetch failed — storing snapshots without USD values', { error });
+    }
 
     let stored = 0;
     for (const snapshot of snapshots) {
@@ -320,5 +329,11 @@ export class PoolProcessor {
     console.info(
       `[PoolProcessor] Stored ${stored}/${snapshots.length} pool snapshots at ${recordedAt.toISOString()}`,
     );
+
+    try {
+      await publish(REDIS_CHANNELS.POOL_SNAPSHOT, { recordedAt, stored, total: snapshots.length });
+    } catch (error) {
+      console.warn('[PoolProcessor] Failed to broadcast pool:snapshot — snapshots are persisted', { error });
+    }
   }
 }

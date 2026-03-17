@@ -26,15 +26,15 @@ flowchart TB
             SS[Stargate Scout<br/>ETH, ARB, OPT, AVAX, POLY]
         end
 
-        subgraph Queue["EVENT QUEUE"]
-            Redis[(Redis<br/>• transfer:init<br/>• transfer:complete<br/>• pool:snapshot)]
-        end
-
         subgraph Processing["PROCESSING LAYER"]
             TP[Transfer Processor<br/>• Match initiations to completions<br/>• Calculate settlement duration<br/>• Classify by size bucket<br/>• Update transfer status]
             FC[Fragility Calculator]
             IC[Impact Calculator]
             LC[LFV Calculator]
+        end
+
+        subgraph Broadcast["WEBSOCKET BROADCAST"]
+            Redis[(Redis pub/sub<br/>• transfer:initiated<br/>• transfer:completed)]
         end
 
         subgraph Storage["STORAGE LAYER"]
@@ -63,11 +63,11 @@ flowchart TB
     ARB --> SS
     OPT --> SS
 
-    AS --> Redis
-    CS --> Redis
-    SS --> Redis
+    AS --> TP
+    CS --> TP
+    SS --> TP
 
-    Redis --> TP
+    TP --> Redis
     TP --> FC
     TP --> IC
     TP --> LC
@@ -91,28 +91,28 @@ sequenceDiagram
     autonumber
     participant SC as Source Chain
     participant AS as Across Scout
-    participant RQ as Redis Queue
     participant TP as Transfer Processor
     participant DB as Database
+    participant RD as Redis (WebSocket)
     participant DC as Dest Chain
     participant AS2 as Across Scout (dest)
 
     Note over SC: User initiates transfer
-    
+
     SC->>AS: V3FundsDeposited Event<br/>depositId: 12345<br/>inputToken: USDC<br/>inputAmount: 10000000000<br/>destinationChainId: 42161
     AS->>AS: Parse event data<br/>Create TransferID<br/>Normalize amounts
-    AS->>RQ: Publish to transfer:initiated
-    RQ->>TP: Consume event
+    AS->>TP: processEvent(initiationEvent)
     TP->>DB: INSERT transfer<br/>status: 'pending'
     TP->>TP: Add to pending map
+    TP->>RD: Publish transfer:initiated<br/>(for WebSocket broadcast)
 
     Note over SC,DC: ⏱️ Time passes (~3-5 minutes)
 
     DC->>AS2: FilledV3Relay Event<br/>depositId: 12345<br/>originChainId: 1<br/>relayer: 0xdef...<br/>outputAmount: 9995000000
-    AS2->>RQ: Publish to transfer:completed
-    RQ->>TP: Consume event
+    AS2->>TP: processEvent(completionEvent)
     TP->>TP: Match to pending transfer<br/>Calculate duration
     TP->>DB: UPDATE transfer<br/>completed_at: now<br/>duration: 210s<br/>status: 'completed'
+    TP->>RD: Publish transfer:completed<br/>(for WebSocket broadcast)
 ```
 
 ### 2.2 Calculation Flow
@@ -317,24 +317,25 @@ classDiagram
     class BaseScout {
         <<abstract>>
         #rpcProviders: Map~ChainName, Provider~
-        #redis: RedisClient
         #chains: ChainName[]
         #isRunning: boolean
         #eventListeners: Array~cleanup~
+        -onEvent: TransferEvent→Promise~void~
+        -blockCache: Map~blockNumber, Date~
         +start()* Promise~void~
         +stop()* Promise~void~
         +getContractAddress(chain)* string
         #parseDepositEvent(log, chainId, timestamp)* TransferEvent|null
         #parseFillEvent(log, chainId, timestamp)* TransferEvent|null
         #emit(event) void
+        #getBlockTimestamp(provider, blockNumber) Date
         #generateTransferId(chainId, identifier) string
-        #getSizeBucket(amountUsd) TransferSizeBucket
     }
 
     class AcrossScout {
         Contract: SpokePool
         Events: V3FundsDeposited, FilledV3Relay
-        Chains: ETH, ARB, OPT, BASE
+        Chains: ETH, ARB, OPT, BASE, POLY
         TransferId: originChainId_depositId
         +start() Promise~void~
         +stop() Promise~void~
