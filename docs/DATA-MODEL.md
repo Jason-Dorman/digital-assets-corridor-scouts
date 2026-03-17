@@ -405,59 +405,55 @@ interface FragilityResult {
   reason: string;
 }
 
-function calculateFragility(
-  utilization: number,
-  tvlUsd: number,
-  netFlow24h: number
-): FragilityResult {
-  // Step 1: Calculate net flow percentage
-  const netFlow24hPct = tvlUsd > 0 ? (netFlow24h / tvlUsd) * 100 : 0;
-
-  // Step 2: Check HIGH conditions (evaluated first)
-  if (utilization > 60) {
-    return {
-      level: 'high',
-      utilization,
-      netFlow24hPct,
-      reason: `High utilization (${utilization.toFixed(0)}%)`,
-    };
+function calculateFragility(input: FragilityInput): FragilityResult {
+  // Guard 1: NaN or Infinity in any field → fail-safe HIGH.
+  if (!Number.isFinite(input.utilization) || !Number.isFinite(input.tvlUsd) || !Number.isFinite(input.netFlow24h)) {
+    // warn + return high
+    return { level: 'high', utilization: 0, netFlow24hPct: 0, reason: 'Data integrity error – unable to calculate' };
   }
 
-  if (netFlow24hPct < -20) {
-    return {
-      level: 'high',
-      utilization,
-      netFlow24hPct,
-      reason: `Large outflow (${netFlow24hPct.toFixed(0)}% in 24h)`,
-    };
+  // Guard 2: Zero or negative TVL → fail-safe HIGH.
+  // A pool with no liquidity is maximally fragile regardless of utilization.
+  // NOTE: The original formula (netFlow24hPct = tvlUsd > 0 ? ... : 0) would return
+  // LOW for a zero-TVL / zero-utilization pool. We intentionally deviate — fail-safe
+  // is safer than masking a drain/corruption signal.
+  if (input.tvlUsd <= 0) {
+    // warn + return high
+    return { level: 'high', utilization: input.utilization, netFlow24hPct: 0, reason: 'Zero TVL detected' };
   }
 
-  // Step 3: Check MEDIUM conditions
-  if (utilization > 30) {
-    return {
-      level: 'medium',
-      utilization,
-      netFlow24hPct,
-      reason: `Moderate utilization (${utilization.toFixed(0)}%)`,
-    };
+  // Guard 3: Clamp utilization to 0–100. Values outside range indicate upstream
+  // corruption; log a warning so affected records can be traced.
+  let utilization = Math.max(0, Math.min(100, input.utilization)); // warn if clamped
+
+  const netFlow24hPct = (input.netFlow24h / input.tvlUsd) * 100;
+
+  // Step 1: Evaluate both HIGH conditions independently.
+  // When both fire simultaneously, the reason string must surface both — a consumer
+  // reading only `reason` should see the full picture.
+  const highUtil    = utilization > 60;
+  const highOutflow = netFlow24hPct < -20;
+
+  if (highUtil || highOutflow) {
+    const reasons: string[] = [];
+    if (highUtil)    reasons.push(`High utilization (${utilization.toFixed(0)}%)`);
+    if (highOutflow) reasons.push(`Large outflow (${netFlow24hPct.toFixed(1)}% in 24h)`);
+    return { level: 'high', utilization, netFlow24hPct, reason: reasons.join('; ') };
   }
 
-  if (netFlow24hPct < -10) {
-    return {
-      level: 'medium',
-      utilization,
-      netFlow24hPct,
-      reason: `Moderate outflow (${netFlow24hPct.toFixed(0)}% in 24h)`,
-    };
+  // Step 2: Check MEDIUM conditions (same dual-visibility pattern).
+  const medUtil    = utilization > 30;
+  const medOutflow = netFlow24hPct < -10;
+
+  if (medUtil || medOutflow) {
+    const reasons: string[] = [];
+    if (medUtil)    reasons.push(`Moderate utilization (${utilization.toFixed(0)}%)`);
+    if (medOutflow) reasons.push(`Moderate outflow (${netFlow24hPct.toFixed(1)}% in 24h)`);
+    return { level: 'medium', utilization, netFlow24hPct, reason: reasons.join('; ') };
   }
 
-  // Step 4: Default to LOW
-  return {
-    level: 'low',
-    utilization,
-    netFlow24hPct,
-    reason: 'Pool is stable',
-  };
+  // Step 3: Default to LOW.
+  return { level: 'low', utilization, netFlow24hPct, reason: 'Pool is stable' };
 }
 ```
 
@@ -469,15 +465,39 @@ function calculateFragility(
 | `medium` | > 30% | OR | < -10% |
 | `low` | ≤ 30% | AND | ≥ -10% |
 
-### 5.4 Example Calculations
+**Input guards (applied before threshold evaluation):**
+
+| Condition | Behaviour |
+|-----------|-----------|
+| NaN or Infinity in any input field | Return `high` — `reason: 'Data integrity error – unable to calculate'` |
+| `tvlUsd ≤ 0` | Return `high` — `reason: 'Zero TVL detected'` (deviation from original formula; see note in §5.2) |
+| `utilization` outside 0–100 | Clamp to valid range, log warning, continue evaluation |
+
+### 5.4 Dual-Trigger Reason Strings
+
+When more than one condition at the same level fires simultaneously, all triggered conditions are combined in the `reason` field, separated by `'; '`. This ensures a caller reading only `reason` sees the full picture.
+
+| Conditions firing | `reason` |
+|-------------------|----------|
+| High utilization only | `"High utilization (65%)"` |
+| High outflow only | `"Large outflow (-25.0% in 24h)"` |
+| Both HIGH conditions | `"High utilization (65%); Large outflow (-25.0% in 24h)"` |
+| Moderate utilization only | `"Moderate utilization (45%)"` |
+| Moderate outflow only | `"Moderate outflow (-15.0% in 24h)"` |
+| Both MEDIUM conditions | `"Moderate utilization (45%); Moderate outflow (-15.0% in 24h)"` |
+
+### 5.5 Example Calculations
 
 | Utilization | Net Flow | Result | Reason |
 |-------------|----------|--------|--------|
 | 65% | +5% | HIGH | High utilization (65%) |
-| 25% | -25% | HIGH | Large outflow (-25% in 24h) |
+| 25% | -25% | HIGH | Large outflow (-25.0% in 24h) |
+| 70% | -30% | HIGH | High utilization (70%); Large outflow (-30.0% in 24h) |
 | 45% | +2% | MEDIUM | Moderate utilization (45%) |
-| 20% | -15% | MEDIUM | Moderate outflow (-15% in 24h) |
+| 20% | -15% | MEDIUM | Moderate outflow (-15.0% in 24h) |
+| 45% | -15% | MEDIUM | Moderate utilization (45%); Moderate outflow (-15.0% in 24h) |
 | 25% | +3% | LOW | Pool is stable |
+| 0% | 0% (TVL=0) | HIGH | Zero TVL detected |
 
 ---
 
