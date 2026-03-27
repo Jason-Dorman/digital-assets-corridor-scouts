@@ -545,7 +545,7 @@ function calculateImpact(
 
   // Step 2: Calculate estimated slippage
   const slippageFactor = SLIPPAGE_FACTORS[bridge] ?? 1.0;
-  const estimatedSlippageBps = poolSharePct * slippageFactor * 10;
+  const estimatedSlippageBps = poolSharePct * slippageFactor;
 
   // Step 3: Determine impact level and warning
   let impactLevel: ImpactResult['impactLevel'];
@@ -557,13 +557,13 @@ function calculateImpact(
     impactLevel = 'low';
   } else if (poolSharePct < 15) {
     impactLevel = 'moderate';
-    warning = `Your transfer is ${poolSharePct.toFixed(1)}% of pool liquidity`;
+    warning = `Your transfer is ${poolSharePct.toFixed(2)}% of pool liquidity`;
   } else if (poolSharePct < 30) {
     impactLevel = 'high';
-    warning = `Large transfer: ${poolSharePct.toFixed(1)}% of pool. Consider splitting.`;
+    warning = `Large transfer: ${poolSharePct.toFixed(2)}% of pool. Consider splitting.`;
   } else {
     impactLevel = 'severe';
-    warning = `Transfer exceeds safe threshold (${poolSharePct.toFixed(1)}% of pool). Split recommended.`;
+    warning = `Transfer exceeds safe threshold (${poolSharePct.toFixed(2)}% of pool). Split recommended.`;
   }
 
   return {
@@ -588,7 +588,7 @@ function calculateImpact(
 ### 6.5 Slippage Formula
 
 ```
-estimatedSlippageBps = poolSharePct × slippageFactor × 10
+estimatedSlippageBps = poolSharePct × slippageFactor
 ```
 
 ### 6.6 Example Calculations
@@ -899,7 +899,7 @@ function calculateSuccessRate(
 | Field | Precision | Example |
 |-------|-----------|---------|
 | `poolSharePct` | 2 decimals | 5.88 |
-| `estimatedSlippageBps` | 1 decimal | 2.9 |
+| `estimatedSlippageBps` | 2 decimals | 2.94 |
 | `successRate` | 1 decimal | 99.8 |
 | `lfv24h` | 3 decimals | -0.082 |
 | `utilization` | 0 decimals | 23 |
