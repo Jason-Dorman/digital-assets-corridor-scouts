@@ -1,5 +1,6 @@
 import { calculateFragility } from '../../../src/calculators/fragility';
 import { FRAGILITY_THRESHOLDS } from '../../../src/lib/constants';
+import { logger } from '../../../src/lib/logger';
 
 // ---------------------------------------------------------------------------
 // Spec examples from docs/DATA-MODEL.md §5.4
@@ -147,7 +148,7 @@ describe('calculateFragility – dual-trigger reason strings', () => {
 
 describe('calculateFragility – NaN/Infinity guard', () => {
   let warnSpy: jest.SpyInstance;
-  beforeEach(() => { warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {}); });
+  beforeEach(() => { warnSpy = jest.spyOn(logger, 'warn').mockImplementation(() => {}); });
   afterEach(() => { warnSpy.mockRestore(); });
 
   it('returns HIGH (fail-safe) when utilization is NaN', () => {
@@ -176,7 +177,7 @@ describe('calculateFragility – NaN/Infinity guard', () => {
 
 describe('calculateFragility – zero TVL guard', () => {
   let warnSpy: jest.SpyInstance;
-  beforeEach(() => { warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {}); });
+  beforeEach(() => { warnSpy = jest.spyOn(logger, 'warn').mockImplementation(() => {}); });
   afterEach(() => { warnSpy.mockRestore(); });
 
   it('returns HIGH (fail-safe) when tvlUsd is 0', () => {
@@ -208,7 +209,7 @@ describe('calculateFragility – zero TVL guard', () => {
 
 describe('calculateFragility – utilization clamping', () => {
   let warnSpy: jest.SpyInstance;
-  beforeEach(() => { warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {}); });
+  beforeEach(() => { warnSpy = jest.spyOn(logger, 'warn').mockImplementation(() => {}); });
   afterEach(() => { warnSpy.mockRestore(); });
 
   it('clamps negative utilization to 0 and returns LOW for otherwise stable inputs', () => {
