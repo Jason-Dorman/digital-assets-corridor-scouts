@@ -713,7 +713,7 @@ function interpretLFV(lfv24h: number): LFVInterpretation {
 | Ethereum | $100M | $102M | +$2M | +2% | stable |
 | Base | $50M | $42M | -$8M | -16% | rapid_flight 🔴 |
 | Arbitrum | $80M | $76M | -$4M | -5% | moderate_outflow |
-| Optimism | $60M | $66M | +$6M | +10% | moderate_inflow |
+| Optimism | $60M | $66M | +$6M | +10% | rapid_inflow |
 
 ---
 

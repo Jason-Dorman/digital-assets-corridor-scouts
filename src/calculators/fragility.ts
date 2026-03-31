@@ -9,6 +9,7 @@
 
 import type { FragilityLevel } from '../types/index';
 import { FRAGILITY_THRESHOLDS } from '../lib/constants';
+import { logger } from '../lib/logger';
 
 export interface FragilityInput {
   /** Pool utilization as a percentage (0–100). */
@@ -17,6 +18,15 @@ export interface FragilityInput {
   tvlUsd: number;
   /** Net flow over the last 24 hours in USD. Positive = inflow, negative = outflow. */
   netFlow24h: number;
+  /**
+   * Optional caller context included verbatim in structured log output.
+   * Pass bridge, corridor, chain, or any other identifiers so that warning
+   * logs can be traced back to a specific pool without additional wrapping.
+   *
+   * @example
+   * calculateFragility({ utilization, tvlUsd, netFlow24h, context: { bridge: 'across', corridor: 'across_ethereum_arbitrum' } })
+   */
+  context?: Record<string, unknown>;
 }
 
 export interface FragilityResult {
@@ -35,6 +45,8 @@ export interface FragilityResult {
  *   3. LOW   – default (stable)
  */
 export function calculateFragility(input: FragilityInput): FragilityResult {
+  const { context } = input;
+
   // Guard: NaN or Infinity in any input field means we cannot trust the
   // calculation. Fail safe (high) rather than fail silent (low).
   if (
@@ -42,7 +54,12 @@ export function calculateFragility(input: FragilityInput): FragilityResult {
     !Number.isFinite(input.tvlUsd) ||
     !Number.isFinite(input.netFlow24h)
   ) {
-    console.warn('[Fragility] Invalid input – NaN or Infinity detected', input);
+    logger.warn('[Fragility] Invalid input – NaN or Infinity detected', {
+      utilization: input.utilization,
+      tvlUsd: input.tvlUsd,
+      netFlow24h: input.netFlow24h,
+      ...context,
+    });
     return { level: 'high', utilization: 0, netFlow24hPct: 0, reason: 'Data integrity error – unable to calculate' };
   }
 
@@ -55,7 +72,12 @@ export function calculateFragility(input: FragilityInput): FragilityResult {
   // returning HIGH immediately — fail-safe is safer than silently masking the
   // drain/corruption signal.
   if (input.tvlUsd <= 0) {
-    console.warn('[Fragility] Zero or negative TVL – pool may be drained or data fetch failed', input);
+    logger.warn('[Fragility] Zero or negative TVL – pool may be drained or data fetch failed', {
+      tvlUsd: input.tvlUsd,
+      utilization: input.utilization,
+      netFlow24h: input.netFlow24h,
+      ...context,
+    });
     return { level: 'high', utilization: input.utilization, netFlow24hPct: 0, reason: 'Zero TVL detected' };
   }
 
@@ -63,7 +85,7 @@ export function calculateFragility(input: FragilityInput): FragilityResult {
   // indicate upstream data corruption; log so affected records can be traced.
   let { utilization } = input;
   if (utilization < 0 || utilization > 100) {
-    console.warn('[Fragility] Utilization out of range – clamping', { utilization });
+    logger.warn('[Fragility] Utilization out of range – clamping', { utilization, ...context });
     utilization = Math.max(0, Math.min(100, utilization));
   }
 
