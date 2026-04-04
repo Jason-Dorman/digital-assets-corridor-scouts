@@ -19,6 +19,7 @@
 
 import type { LFVInterpretation } from '../types/index';
 import { LFV_THRESHOLDS } from '../lib/constants';
+import { logger } from '../lib/logger';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -115,14 +116,14 @@ export function calculateLFV(input: LFVInput): LFVResult {
     !Number.isFinite(timeWindowHours) ||
     !Number.isFinite(poolsMonitored)
   ) {
-    console.warn('[LFV] Invalid input – NaN or Infinity detected', input);
+    logger.warn('[LFV] Invalid input – NaN or Infinity detected', { ...input });
     return buildStableZero(chain, tvlNowUsd, poolsMonitored);
   }
 
   // Guard: time window must be positive to avoid dividing by zero when
   // normalizing to 24 h (lfv24h = lfv × 24 / timeWindowHours).
   if (timeWindowHours <= 0) {
-    console.warn('[LFV] Invalid timeWindowHours – must be > 0', input);
+    logger.warn('[LFV] Invalid timeWindowHours – must be > 0', { ...input });
     return buildStableZero(chain, tvlNowUsd, poolsMonitored);
   }
 
@@ -132,7 +133,7 @@ export function calculateLFV(input: LFVInput): LFVResult {
   // emit an additional warning so affected records can be traced.
   if (tvlStartUsd <= 0) {
     if (tvlStartUsd < 0) {
-      console.warn('[LFV] Negative tvlStartUsd – pool data may be corrupt', input);
+      logger.warn('[LFV] Negative tvlStartUsd – pool data may be corrupt', { ...input });
     }
     return buildStableZero(chain, tvlNowUsd, poolsMonitored);
   }

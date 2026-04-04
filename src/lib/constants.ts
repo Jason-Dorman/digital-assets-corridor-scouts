@@ -40,6 +40,18 @@ export const BRIDGES = ['across', 'cctp', 'stargate'] as const;
 export type BridgeName = (typeof BRIDGES)[number];
 
 /**
+ * Set of valid bridge names for runtime validation in API routes.
+ * Typed as Set<string> so raw query-param strings can be validated without casting.
+ */
+export const VALID_BRIDGES = new Set<string>(BRIDGES);
+
+/**
+ * Set of valid chain names for runtime validation in API routes.
+ * Typed as Set<string> so raw query-param strings can be validated without casting.
+ */
+export const VALID_CHAIN_NAMES = new Set<string>(Object.keys(CHAIN_IDS));
+
+/**
  * Chains supported per bridge (docs/DATA-MODEL.md §2.3).
  */
 export const BRIDGE_CHAINS: Record<BridgeName, ChainName[]> = {
@@ -198,6 +210,24 @@ export const IMPACT_THRESHOLDS = {
 } as const;
 
 // ---------------------------------------------------------------------------
+// System-wide Status Thresholds (derived from UPDATED-SPEC.md example where
+// corridorsDown=1 of 47 still yields status="operational")
+// ---------------------------------------------------------------------------
+
+/**
+ * Thresholds for deriving the overall system status from corridor health distribution.
+ *   ≥ FRACTION_DOWN_FOR_DOWN of corridors down      → 'down'
+ *   ≥ FRACTION_DOWN_FOR_DEGRADED of corridors down  → 'degraded'
+ *   ≥ FRACTION_DEGRADED_FOR_DEGRADED of corridors degraded → 'degraded'
+ *   otherwise                                        → 'operational'
+ */
+export const SYSTEM_STATUS_THRESHOLDS = {
+  FRACTION_DOWN_FOR_DOWN: 0.5,      // ≥ 50% of corridors down → system down
+  FRACTION_DOWN_FOR_DEGRADED: 0.2,  // ≥ 20% of corridors down → system degraded
+  FRACTION_DEGRADED_FOR_DEGRADED: 0.5, // ≥ 50% of corridors degraded → system degraded
+} as const;
+
+// ---------------------------------------------------------------------------
 // Health Status Thresholds (docs/DATA-MODEL.md §8.3)
 // ---------------------------------------------------------------------------
 
@@ -217,7 +247,8 @@ export const ANOMALY_THRESHOLDS = {
   FAILURE_RATE_THRESHOLD: 10,   // > 10% failure rate in last hour
   LIQUIDITY_DROP_THRESHOLD: 15, // > 15% TVL drop in 24 hours
   MIN_SAMPLE_SIZE: 5,           // minimum samples for p90/rate to be statistically meaningful
-  MAX_TRANSFER_QUERY_ROWS: 50_000, // hard cap on bulk transfer query to prevent OOM
+  MAX_TRANSFER_QUERY_ROWS: 50_000,   // hard cap on bulk transfer query to prevent OOM
+  MAX_POOL_SNAPSHOT_QUERY_ROWS: 10_000, // hard cap on pool snapshot queries to prevent OOM
 } as const;
 
 /**
