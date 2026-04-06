@@ -55,7 +55,7 @@ interface HealthResponse {
   corridorsDegraded: number;
   corridorsDown: number;
   transfers24h: number;
-  successRate24h: number;  // 0-100
+  successRate24h: number | null;  // 0-100, null when no transfers have resolved
   activeAnomalies: number;
   updatedAt: string;       // ISO8601
 }
@@ -185,8 +185,8 @@ interface Corridor {
   metrics: {
     transferCount1h: number;
     transferCount24h: number;
-    successRate1h: number;   // 0-100
-    successRate24h: number;
+    successRate1h: number | null;   // 0-100, null when no resolved transfers
+    successRate24h: number | null;  // 0-100, null when no resolved transfers
     p50DurationSeconds: number;
     p90DurationSeconds: number;
     volumeUsd24h: number;
@@ -281,7 +281,7 @@ interface Transfer {
 interface HourlyStat {
   hour: string;                     // ISO8601 hour start
   transferCount: number;
-  successRate: number;
+  successRate: number | null;       // null when no resolved transfers in bucket
   p50DurationSeconds: number;
   p90DurationSeconds: number;
   volumeUsd: number;
@@ -290,7 +290,7 @@ interface HourlyStat {
 interface DailyStat {
   date: string;                     // YYYY-MM-DD
   transferCount: number;
-  successRate: number;
+  successRate: number | null;       // null when no resolved transfers in bucket
   avgDurationSeconds: number;
   volumeUsd: number;
   status: "healthy" | "degraded" | "down";
@@ -396,7 +396,7 @@ interface ImpactEstimateResponse {
     status: "healthy" | "degraded" | "down";
     p50DurationSeconds: number;
     p90DurationSeconds: number;
-    successRate1h: number;
+    successRate1h: number | null;    // null when no resolved transfers
   };
   recommendation: string | null;   // Actionable advice
   disclaimer: string;              // Always present

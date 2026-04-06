@@ -12,6 +12,7 @@
 
 import type { ImpactLevel, BridgeName } from '../types/index';
 import { SLIPPAGE_FACTORS, IMPACT_THRESHOLDS } from '../lib/constants';
+import { logger } from '../lib/logger';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -30,12 +31,12 @@ export interface ImpactInput {
 }
 
 export interface ImpactResult {
-  /** Transfer as a percentage of pool TVL. Rounded to 2 decimal places. */
+  /** Transfer as a percentage of pool TVL. Full precision — callers apply display rounding. */
   poolSharePct: number;
   /**
    * Estimated slippage in basis points.
    * Formula: poolSharePct × slippageFactor  (docs/DATA-MODEL.md §8.3)
-   * Rounded to 2 decimal places.
+   * Full precision — callers apply display rounding.
    */
   estimatedSlippageBps: number;
   impactLevel: ImpactLevel;
@@ -121,10 +122,14 @@ export function calculateImpact(input: ImpactInput): ImpactResult {
   // Guard: NaN or Infinity in any numeric field — cannot produce a meaningful
   // result. Fail safe (severe) rather than propagate nonsense to callers.
   if (!Number.isFinite(transferAmountUsd) || !Number.isFinite(poolTvlUsd)) {
-    console.warn('[Impact] Invalid input – NaN or Infinity detected', input);
+    logger.warn('[Impact] Invalid input – NaN or Infinity detected', {
+      transferAmountUsd: String(input.transferAmountUsd),
+      poolTvlUsd: String(input.poolTvlUsd),
+      bridge: input.bridge,
+    });
     return {
       poolSharePct: 100,
-      estimatedSlippageBps: Math.round(resolveSlippageFactor(bridge) * 100 * 100) / 100,
+      estimatedSlippageBps: resolveSlippageFactor(bridge) * 100,
       impactLevel: 'severe',
       warning: 'Transfer exceeds safe threshold (100.00% of pool). Split recommended.',
     };
@@ -133,7 +138,10 @@ export function calculateImpact(input: ImpactInput): ImpactResult {
   // Guard: negative transfer amount is not a valid input. Treat as zero rather
   // than returning a negative pool share that would corrupt downstream logic.
   if (transferAmountUsd < 0) {
-    console.warn('[Impact] Negative transferAmountUsd – treating as zero', input);
+    logger.warn('[Impact] Negative transferAmountUsd – treating as zero', {
+      transferAmountUsd,
+      bridge: input.bridge,
+    });
     return {
       poolSharePct: 0,
       estimatedSlippageBps: 0,
@@ -146,7 +154,11 @@ export function calculateImpact(input: ImpactInput): ImpactResult {
   // Zero or negative TVL means the pool is drained or the data fetch returned
   // corrupt data. Default to 100% pool share (worst-case) per spec §8.3.
   if (poolTvlUsd <= 0) {
-    console.warn('[Impact] Zero or negative poolTvlUsd – defaulting to 100% pool share', input);
+    logger.warn('[Impact] Zero or negative poolTvlUsd – defaulting to 100% pool share', {
+      poolTvlUsd,
+      transferAmountUsd,
+      bridge: input.bridge,
+    });
   }
 
   const rawPoolSharePct: number =
@@ -162,8 +174,8 @@ export function calculateImpact(input: ImpactInput): ImpactResult {
   const { impactLevel, warning } = classifyImpact(rawPoolSharePct);
 
   return {
-    poolSharePct: Math.round(rawPoolSharePct * 100) / 100,        // 2 decimal places
-    estimatedSlippageBps: Math.round(rawSlippageBps * 100) / 100, // 2 decimal places
+    poolSharePct: rawPoolSharePct,
+    estimatedSlippageBps: rawSlippageBps,
     impactLevel,
     warning,
   };

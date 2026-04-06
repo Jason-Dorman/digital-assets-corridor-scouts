@@ -899,12 +899,19 @@ function calculateSuccessRate(
 | Field | Precision | Example |
 |-------|-----------|---------|
 | `poolSharePct` | 2 decimals | 5.88 |
-| `estimatedSlippageBps` | 2 decimals | 2.94 |
-| `successRate` | 1 decimal | 99.8 |
+| `estimatedSlippageBps` | 1 decimal | 2.9 |
+| `successRate` | 2 decimals | 99.73 |
 | `lfv24h` | 3 decimals | -0.082 |
 | `utilization` | 0 decimals | 23 |
 | `durationSeconds` | 0 decimals | 210 |
-| `amountUsd` | 0 decimals | 5000000 |
+| `amountUsd` | 2 decimals | 5000000.00 |
+
+### 12.2 Nullable Success Rate
+
+`successRate1h`, `successRate24h`, and the system-level `successRate24h` return `null`
+when no transfers have resolved (completed, failed, or stuck) in the window. This avoids
+reporting a phantom 100% success rate when only pending transfers exist. Consumers must
+handle `null` as "no data" rather than assuming a numeric value.
 
 ---
 
