@@ -73,10 +73,14 @@ async function computeFlight() {
 
   // Fetch all stablecoin pool snapshots within the 24h window.
   // Ordered desc so the first row per (poolId) is the latest snapshot.
+  // Exclude HubPool aggregate rows (chain = 'ethereum_hub') — those represent
+  // cross-chain aggregate TVL, not per-chain liquidity. Including them would
+  // create a phantom 'ethereum_hub' chain in the LFV response.
   const snapshots = await db.poolSnapshot.findMany({
     where: {
       recordedAt: { gte: twentyFourHoursAgo },
       asset: { in: [...STABLECOINS] },
+      chain: { not: 'ethereum_hub' },
     },
     select: {
       poolId: true,
