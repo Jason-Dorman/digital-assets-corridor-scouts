@@ -121,6 +121,16 @@ export async function GET(
       }),
     ]);
 
+    // If we have no transfers AND no pool snapshots for this corridor, it is not
+    // being monitored — returning zeros would silently misrepresent the corridor
+    // state (e.g. health='healthy' from 100% of zero transfers is misleading).
+    if (transfers7d.length === 0 && poolSnapshots24h.length === 0) {
+      return NextResponse.json(
+        { error: { code: 'NOT_FOUND', message: `Corridor '${corridorId}' not found` } },
+        { status: 404 },
+      );
+    }
+
     if (transfers7d.length === ANOMALY_THRESHOLDS.MAX_TRANSFER_QUERY_ROWS) {
       logger.warn('[api/corridors/[id]] Transfer query hit row cap – metrics may be incomplete', {
         corridorId,

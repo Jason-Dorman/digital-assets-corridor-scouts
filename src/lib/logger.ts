@@ -15,18 +15,29 @@ const isDev = process.env.NODE_ENV !== 'production';
 type LogMeta = Record<string, unknown>;
 
 function emit(level: 'info' | 'warn' | 'error', message: string, meta?: LogMeta): void {
-  const output = isDev
-    ? `[${level.toUpperCase()}] ${message}${meta ? ' ' + JSON.stringify(meta) : ''}`
-    : JSON.stringify({ level, message, timestamp: new Date().toISOString(), ...meta });
+  const prefix = `[${level.toUpperCase()}] ${message}`;
 
   // Route to the appropriate console method so log-level filtering on the
   // consuming side (e.g. Docker log drivers) works as expected.
-  if (level === 'error') {
-    console.error(output);
-  } else if (level === 'warn') {
-    console.warn(output);
+  if (isDev) {
+    // In dev mode pass message and meta as separate args so structured objects
+    // remain inspectable in the terminal (and spyable in tests).
+    if (level === 'error') {
+      meta ? console.error(prefix, meta) : console.error(prefix);
+    } else if (level === 'warn') {
+      meta ? console.warn(prefix, meta) : console.warn(prefix);
+    } else {
+      meta ? console.info(prefix, meta) : console.info(prefix);
+    }
   } else {
-    console.info(output);
+    const output = JSON.stringify({ level, message, timestamp: new Date().toISOString(), ...meta });
+    if (level === 'error') {
+      console.error(output);
+    } else if (level === 'warn') {
+      console.warn(output);
+    } else {
+      console.info(output);
+    }
   }
 }
 

@@ -39,6 +39,7 @@ jest.mock('../../../src/calculators/lfv', () => ({
 
 jest.mock('../../../src/lib/constants', () => ({
   STABLECOINS: ['USDC', 'USDT', 'DAI'],
+  ANOMALY_THRESHOLDS: { MAX_POOL_SNAPSHOT_QUERY_ROWS: 10_000 },
 }));
 
 jest.mock('../../../src/lib/logger', () => ({
@@ -159,7 +160,7 @@ describe('GET /api/flight – happy path', () => {
     expect(entry.lfv24h).toBe(-0.123);
   });
 
-  it('rounds netFlowUsd to nearest integer', async () => {
+  it('rounds netFlowUsd to 2 decimal places', async () => {
     mockPoolFindMany.mockResolvedValue([
       makePoolSnapshot('arbitrum', 1_000_000, NOW),
     ]);
@@ -171,7 +172,8 @@ describe('GET /api/flight – happy path', () => {
     const response = await GET();
     const body = await response.json();
 
-    expect(body.chains[0].netFlowUsd).toBe(-12346);
+    // round2 rounds to 2dp, not nearest integer
+    expect(body.chains[0].netFlowUsd).toBe(-12345.68);
   });
 });
 

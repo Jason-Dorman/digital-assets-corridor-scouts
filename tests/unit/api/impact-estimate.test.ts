@@ -15,7 +15,7 @@
 // Hoisted mock declarations
 // ---------------------------------------------------------------------------
 
-const mockPoolFindFirst    = jest.fn();
+const mockPoolFindMany     = jest.fn();
 const mockTransferFindMany = jest.fn();
 const mockCalculateImpact  = jest.fn();
 const mockCalculateFragility = jest.fn();
@@ -25,7 +25,7 @@ const mockCalculatePercentile = jest.fn();
 jest.mock('../../../src/lib/db', () => ({
   db: {
     poolSnapshot: {
-      findFirst: (...args: unknown[]) => mockPoolFindFirst(...args),
+      findMany: (...args: unknown[]) => mockPoolFindMany(...args),
     },
     transfer: {
       findMany: (...args: unknown[]) => mockTransferFindMany(...args),
@@ -51,7 +51,10 @@ jest.mock('../../../src/lib/corridor-metrics', () => ({
 }));
 
 jest.mock('../../../src/lib/constants', () => ({
-  ANOMALY_THRESHOLDS: { MAX_TRANSFER_QUERY_ROWS: 50_000 },
+  ANOMALY_THRESHOLDS: { MAX_TRANSFER_QUERY_ROWS: 50_000, MAX_POOL_SNAPSHOT_QUERY_ROWS: 10_000 },
+  VALID_BRIDGES: new Set(['across', 'cctp', 'stargate']),
+  VALID_CHAIN_NAMES: new Set(['ethereum', 'arbitrum', 'optimism', 'base', 'polygon', 'avalanche']),
+  STABLECOINS: ['USDC', 'USDT', 'DAI'],
 }));
 
 jest.mock('../../../src/lib/logger', () => ({
@@ -108,7 +111,8 @@ function makeRequest(url: string): NextRequest {
 const BASE_URL = 'http://localhost/api/impact/estimate?bridge=across&source=ethereum&dest=arbitrum&amountUsd=100000';
 
 function setupDefaultMocks() {
-  mockPoolFindFirst.mockResolvedValue(POOL_SNAPSHOT);
+  // findMany returns an array; route aggregates across pools
+  mockPoolFindMany.mockResolvedValue([{ ...POOL_SNAPSHOT, poolId: 'pool-1', chain: 'arbitrum' }]);
   mockTransferFindMany.mockResolvedValue([]);
   mockCalculateImpact.mockReturnValue(IMPACT_RESULT);
   mockCalculateFragility.mockReturnValue(FRAGILITY_RESULT);
@@ -152,14 +156,14 @@ describe('GET /api/impact/estimate – happy path', () => {
     expect(body.corridorId).toBe('across_ethereum_arbitrum');
   });
 
-  it('transferAmountUsd is rounded to integer', async () => {
+  it('transferAmountUsd is rounded to 2 decimal places', async () => {
     setupDefaultMocks();
     const response = await GET(
-      makeRequest('http://localhost/api/impact/estimate?bridge=across&source=ethereum&dest=arbitrum&amountUsd=100000.78'),
+      makeRequest('http://localhost/api/impact/estimate?bridge=across&source=ethereum&dest=arbitrum&amountUsd=100000.789'),
     );
     const body = await response.json();
-    expect(Number.isInteger(body.transferAmountUsd)).toBe(true);
-    expect(body.transferAmountUsd).toBe(100001);
+    // round2 → 2 decimal places
+    expect(body.transferAmountUsd).toBe(100000.79);
   });
 
   it('impact object contains poolSharePct, estimatedSlippageBps, impactLevel', async () => {
@@ -209,7 +213,7 @@ describe('GET /api/impact/estimate – disclaimer', () => {
 
   it('disclaimer is present even when pool TVL is zero', async () => {
     setupDefaultMocks();
-    mockPoolFindFirst.mockResolvedValue(null);
+    mockPoolFindMany.mockResolvedValue([]);
 
     const response = await GET(makeRequest(BASE_URL));
     const body = await response.json();
@@ -276,7 +280,7 @@ describe('GET /api/impact/estimate – pool data', () => {
 
   it('uses zero pool values when no snapshot found', async () => {
     setupDefaultMocks();
-    mockPoolFindFirst.mockResolvedValue(null);
+    mockPoolFindMany.mockResolvedValue([]);
 
     const response = await GET(makeRequest(BASE_URL));
     const body = await response.json();
@@ -352,12 +356,13 @@ describe('GET /api/impact/estimate – validation errors', () => {
     expect(response.status).toBe(400);
   });
 
-  it('accepts zero amountUsd (edge case — no-op transfer)', async () => {
+  it('rejects zero amountUsd (not a meaningful transfer amount)', async () => {
     setupDefaultMocks();
     const response = await GET(
       makeRequest('http://localhost/api/impact/estimate?bridge=across&source=ethereum&dest=arbitrum&amountUsd=0'),
     );
-    expect(response.status).toBe(200);
+    // Route requires amountUsd > 0 — a $0 transfer has no meaningful impact to estimate
+    expect(response.status).toBe(400);
   });
 });
 
@@ -367,7 +372,7 @@ describe('GET /api/impact/estimate – validation errors', () => {
 
 describe('GET /api/impact/estimate – database error', () => {
   it('returns 500 when pool snapshot query throws', async () => {
-    mockPoolFindFirst.mockRejectedValue(new Error('DB timeout'));
+    mockPoolFindMany.mockRejectedValue(new Error('DB timeout'));
     mockTransferFindMany.mockResolvedValue([]);
 
     const response = await GET(makeRequest(BASE_URL));

@@ -16,7 +16,7 @@
 
 const mockTransferFindMany    = jest.fn();
 const mockAnomalyFindMany     = jest.fn();
-const mockPoolFindFirst       = jest.fn();
+const mockPoolFindMany        = jest.fn();
 const mockCalculateHealth     = jest.fn();
 const mockCalculateFragility  = jest.fn();
 const mockCalculatePercentile = jest.fn();
@@ -30,7 +30,7 @@ jest.mock('../../../src/lib/db', () => ({
       findMany: (...args: unknown[]) => mockAnomalyFindMany(...args),
     },
     poolSnapshot: {
-      findFirst: (...args: unknown[]) => mockPoolFindFirst(...args),
+      findMany: (...args: unknown[]) => mockPoolFindMany(...args),
     },
   },
 }));
@@ -48,7 +48,10 @@ jest.mock('../../../src/lib/corridor-metrics', () => ({
 }));
 
 jest.mock('../../../src/lib/constants', () => ({
-  ANOMALY_THRESHOLDS: { MAX_TRANSFER_QUERY_ROWS: 50_000 },
+  ANOMALY_THRESHOLDS: { MAX_TRANSFER_QUERY_ROWS: 50_000, MAX_POOL_SNAPSHOT_QUERY_ROWS: 10_000 },
+  VALID_BRIDGES: new Set(['across', 'cctp', 'stargate']),
+  VALID_CHAIN_NAMES: new Set(['ethereum', 'arbitrum', 'optimism', 'base', 'polygon', 'avalanche']),
+  STABLECOINS: ['USDC', 'USDT', 'DAI'],
 }));
 
 jest.mock('../../../src/lib/logger', () => ({
@@ -127,7 +130,8 @@ function makeCtx(id: string) {
 function setupDefaultMocks(transfers: ReturnType<typeof makeTransfer>[] = [makeTransfer({})]) {
   mockTransferFindMany.mockResolvedValue(transfers);
   mockAnomalyFindMany.mockResolvedValue([]);
-  mockPoolFindFirst.mockResolvedValue(POOL_SNAPSHOT);
+  // findMany returns array; include chain so dest-chain filter in route matches
+  mockPoolFindMany.mockResolvedValue([{ ...POOL_SNAPSHOT, poolId: 'pool-1', chain: 'arbitrum' }]);
   mockCalculateHealth.mockReturnValue(HEALTH_RESULT);
   mockCalculateFragility.mockReturnValue(FRAGILITY_RESULT);
   mockCalculatePercentile.mockReturnValue(120);
@@ -290,20 +294,24 @@ describe('GET /api/corridors/[id] – happy path', () => {
     expect(body.anomalies[0].resolvedAt).toBeNull();
   });
 
-  it('pool tvlUsd and utilization are rounded integers', async () => {
+  it('pool tvlUsd is rounded to 2 decimal places and utilization is a rounded integer', async () => {
     setupDefaultMocks();
-    mockPoolFindFirst.mockResolvedValue({
+    mockPoolFindMany.mockResolvedValue([{
+      poolId: 'pool-1', chain: 'arbitrum',
       tvlUsd: 10_000_000.567,
       utilization: 25.9,
       availableLiquidity: 8_000_000,
-    });
+      recordedAt: NOW,
+    }]);
 
     const response = await GET(
       makeRequest('http://localhost/api/corridors/across_ethereum_arbitrum'),
       makeCtx('across_ethereum_arbitrum'),
     );
     const body = await response.json();
-    expect(Number.isInteger(body.corridor.pool.tvlUsd)).toBe(true);
+    // tvlUsd uses round2 (2dp precision); utilization uses Math.round (integer)
+    expect(body.corridor.pool.tvlUsd).toBe(10_000_000.57);
+    expect(Number.isInteger(body.corridor.pool.utilization)).toBe(true);
   });
 });
 
@@ -339,10 +347,12 @@ describe('GET /api/corridors/[id] – invalid ID format', () => {
 // ---------------------------------------------------------------------------
 
 describe('GET /api/corridors/[id] – not found', () => {
-  it('returns 404 when no transfers exist for the corridor', async () => {
+  it('returns 404 when no transfers AND no pool snapshots exist for the corridor', async () => {
+    // Both empty = corridor is not being monitored — returning zeros would be
+    // misleading financial data (e.g. 100% success rate from 0 transfers).
     mockTransferFindMany.mockResolvedValue([]);
     mockAnomalyFindMany.mockResolvedValue([]);
-    mockPoolFindFirst.mockResolvedValue(null);
+    mockPoolFindMany.mockResolvedValue([]);
 
     const response = await GET(
       makeRequest('http://localhost/api/corridors/across_ethereum_arbitrum'),
@@ -362,7 +372,7 @@ describe('GET /api/corridors/[id] – missing pool data', () => {
   it('returns 200 and zero pool values when no snapshot exists', async () => {
     mockTransferFindMany.mockResolvedValue([makeTransfer({})]);
     mockAnomalyFindMany.mockResolvedValue([]);
-    mockPoolFindFirst.mockResolvedValue(null);
+    mockPoolFindMany.mockResolvedValue([]); // has transfers but no pool data
     mockCalculateHealth.mockReturnValue(HEALTH_RESULT);
     mockCalculateFragility.mockReturnValue(FRAGILITY_RESULT);
     mockCalculatePercentile.mockReturnValue(0);
@@ -385,7 +395,7 @@ describe('GET /api/corridors/[id] – database error', () => {
   it('returns 500 when transfer query throws', async () => {
     mockTransferFindMany.mockRejectedValue(new Error('DB offline'));
     mockAnomalyFindMany.mockResolvedValue([]);
-    mockPoolFindFirst.mockResolvedValue(null);
+    mockPoolFindMany.mockResolvedValue([]);
 
     const response = await GET(
       makeRequest('http://localhost/api/corridors/across_ethereum_arbitrum'),

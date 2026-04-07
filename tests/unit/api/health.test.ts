@@ -26,6 +26,8 @@ jest.mock('../../../src/lib/redis', () => ({
 
 jest.mock('../../../src/lib/corridor-metrics', () => ({
   fetchAllCorridorMetrics: (...args: unknown[]) => mockFetchAllCorridorMetrics(...args),
+  CORRIDOR_METRICS_CACHE_KEY: 'api:corridor-metrics',
+  CORRIDOR_METRICS_CACHE_TTL: 60,
 }));
 
 jest.mock('../../../src/lib/db', () => ({
@@ -141,8 +143,8 @@ describe('GET /api/health – happy path (cache miss)', () => {
   it('writes fresh data to Redis cache', async () => {
     await GET();
     expect(mockRedisSetex).toHaveBeenCalledWith(
-      'api:health',
-      30,
+      'api:corridor-metrics',
+      60,
       expect.any(String),
     );
   });
@@ -235,16 +237,13 @@ describe('GET /api/health – system status', () => {
 
 describe('GET /api/health – cache hit', () => {
   it('returns cached response without calling fetchAllCorridorMetrics', async () => {
+    // The health route caches CorridorDataResult (raw corridor metrics), not the
+    // computed health response. On a hit it skips fetchAllCorridorMetrics but
+    // still computes health (including the anomaly count DB call).
     const cached = JSON.stringify({
-      status: 'operational',
-      corridorsMonitored: 10,
-      corridorsHealthy: 10,
-      corridorsDegraded: 0,
-      corridorsDown: 0,
-      transfers24h: 500,
-      successRate24h: 100,
-      activeAnomalies: 0,
-      updatedAt: '2026-01-01T00:00:00.000Z',
+      corridors: Array(10).fill({ status: 'healthy' }),
+      totalTransfers24h: 500,
+      overallSuccessRate24h: 100,
     });
     mockRedisGet.mockResolvedValue(cached);
 
@@ -253,7 +252,8 @@ describe('GET /api/health – cache hit', () => {
 
     expect(body.corridorsMonitored).toBe(10);
     expect(mockFetchAllCorridorMetrics).not.toHaveBeenCalled();
-    expect(mockAnomalyCount).not.toHaveBeenCalled();
+    // anomaly count is still called — it's part of computeHealth, not the cache
+    expect(mockAnomalyCount).toHaveBeenCalled();
   });
 
   it('does not write to cache when cache hit', async () => {

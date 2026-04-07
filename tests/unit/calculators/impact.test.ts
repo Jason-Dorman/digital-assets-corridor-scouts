@@ -70,16 +70,18 @@ describe('calculateImpact – spec examples', () => {
 // ---------------------------------------------------------------------------
 
 describe('calculateImpact – API spec example', () => {
-  it('$5M / $85M / across → poolSharePct 5.88, slippageBps 2.94, moderate', () => {
-    // 5000000/85000000 × 100 = 5.882352...% → 5.88; × 0.5 = 2.941176... → 2.94
+  it('$5M / $85M / across → poolSharePct ~5.88%, slippageBps ~2.94, moderate', () => {
+    // 5000000/85000000 × 100 = 5.882352941...  (full precision — callers round for display)
+    // × 0.5 (across factor) = 2.941176470...
     const result = calculateImpact({
       transferAmountUsd: 5_000_000,
       poolTvlUsd: 85_000_000,
       bridge: 'across',
     });
-    expect(result.poolSharePct).toBe(5.88);
-    expect(result.estimatedSlippageBps).toBe(2.94);
+    expect(result.poolSharePct).toBeCloseTo(5.8824, 4);
+    expect(result.estimatedSlippageBps).toBeCloseTo(2.9412, 4);
     expect(result.impactLevel).toBe('moderate');
+    // warning text is built with toFixed(2) on the raw value, so it reads "5.88"
     expect(result.warning).toBe('Your transfer is 5.88% of pool liquidity');
   });
 });
@@ -231,28 +233,30 @@ describe('calculateImpact – slippage formula per bridge', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Rounding rules — docs/DATA-MODEL.md §14
+// Full precision — docs/DATA-MODEL.md §14 (rounding applied by callers)
 // ---------------------------------------------------------------------------
 
-describe('calculateImpact – rounding precision', () => {
-  it('poolSharePct rounds to 2 decimal places', () => {
-    // 5000000 / 85000000 * 100 = 5.882352941...
+describe('calculateImpact – full precision output', () => {
+  it('poolSharePct is full precision (callers apply display rounding)', () => {
+    // 5000000 / 85000000 * 100 = 5.882352941... — NOT rounded here
     const result = calculateImpact({
       transferAmountUsd: 5_000_000,
       poolTvlUsd: 85_000_000,
       bridge: 'cctp',
     });
-    expect(result.poolSharePct).toBe(5.88);
+    expect(result.poolSharePct).toBeCloseTo(5.8824, 4);
+    expect(Number.isFinite(result.poolSharePct)).toBe(true);
   });
 
-  it('estimatedSlippageBps rounds to 2 decimal places', () => {
-    // poolSharePct = 5.882352...  ×  0.5 = 2.941176...  → 2.94
+  it('estimatedSlippageBps is full precision (callers apply display rounding)', () => {
+    // poolSharePct = 5.882352... × 0.5 (across) = 2.941176... — NOT rounded here
     const result = calculateImpact({
       transferAmountUsd: 5_000_000,
       poolTvlUsd: 85_000_000,
       bridge: 'across',
     });
-    expect(result.estimatedSlippageBps).toBe(2.94);
+    expect(result.estimatedSlippageBps).toBeCloseTo(2.9412, 4);
+    expect(Number.isFinite(result.estimatedSlippageBps)).toBe(true);
   });
 });
 

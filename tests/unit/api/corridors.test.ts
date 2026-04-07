@@ -23,6 +23,8 @@ jest.mock('../../../src/lib/redis', () => ({
 
 jest.mock('../../../src/lib/corridor-metrics', () => ({
   fetchAllCorridorMetrics: (...args: unknown[]) => mockFetchAllCorridorMetrics(...args),
+  CORRIDOR_METRICS_CACHE_KEY: 'api:corridor-metrics',
+  CORRIDOR_METRICS_CACHE_TTL: 60,
 }));
 
 jest.mock('../../../src/lib/logger', () => ({
@@ -330,7 +332,8 @@ describe('GET /api/corridors – database error', () => {
 
 describe('GET /api/corridors – cache hit', () => {
   it('returns cached corridors without calling fetchAllCorridorMetrics', async () => {
-    mockRedisGet.mockResolvedValue(JSON.stringify(FIXTURES));
+    // Route stores CorridorDataResult ({ corridors: [...] }), not a bare array
+    mockRedisGet.mockResolvedValue(JSON.stringify({ corridors: FIXTURES }));
 
     const response = await GET(makeRequest('http://localhost/api/corridors'));
     expect(response.status).toBe(200);
@@ -340,7 +343,7 @@ describe('GET /api/corridors – cache hit', () => {
   });
 
   it('does not write cache on a cache hit', async () => {
-    mockRedisGet.mockResolvedValue(JSON.stringify(FIXTURES));
+    mockRedisGet.mockResolvedValue(JSON.stringify({ corridors: FIXTURES }));
     await GET(makeRequest('http://localhost/api/corridors'));
     expect(mockRedisSetex).not.toHaveBeenCalled();
   });
@@ -349,7 +352,7 @@ describe('GET /api/corridors – cache hit', () => {
 describe('GET /api/corridors – cache miss', () => {
   it('writes to Redis with 60s TTL on cache miss', async () => {
     await GET(makeRequest('http://localhost/api/corridors'));
-    expect(mockRedisSetex).toHaveBeenCalledWith('api:corridors', 60, expect.any(String));
+    expect(mockRedisSetex).toHaveBeenCalledWith('api:corridor-metrics', 60, expect.any(String));
   });
 });
 
