@@ -347,15 +347,15 @@ function MetricsGrid({ corridor }: { corridor: Corridor }): React.JSX.Element {
   ];
 
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 xs:gap-3">
       {stats.map(stat => (
-        <div key={stat.label} className="card-radar p-3 text-center" title={stat.reason}>
-          <div className={`text-xl sm:text-2xl font-mono font-bold tabular-nums ${stat.accent}`}>
+        <div key={stat.label} className="card-radar p-2 xs:p-3 text-center" title={stat.reason}>
+          <div className={`text-lg xs:text-xl sm:text-2xl font-mono font-bold tabular-nums ${stat.accent}`}>
             {stat.badge !== undefined
               ? <FragilityBadge level={stat.badge} />
               : stat.value}
           </div>
-          <div className="mt-1 text-[10px] text-lavender-dim uppercase tracking-wider font-mono">
+          <div className="mt-1 text-[9px] xs:text-[10px] text-lavender-dim uppercase tracking-wider font-mono">
             {stat.label}
           </div>
         </div>
@@ -397,7 +397,7 @@ function SettlementChart({
             No settlement data for this period.
           </p>
         ) : (
-          <ResponsiveContainer width="100%" height={240}>
+          <ResponsiveContainer width="100%" height={200}>
             <LineChart data={chartData} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#2a2045" />
               <XAxis
@@ -464,7 +464,7 @@ function SettlementChart({
         )}
 
         {/* Legend */}
-        <div className="flex items-center gap-4 mt-2 justify-center text-[10px] font-mono text-lavender-dim">
+        <div className="flex items-center gap-2 xs:gap-4 mt-2 justify-center text-[9px] xs:text-[10px] font-mono text-lavender-dim">
           <span className="flex items-center gap-1.5">
             <span className="inline-block w-3 h-0.5 bg-radar" /> p50 (median)
           </span>
@@ -490,19 +490,22 @@ function HealthTrend({ dailyStats }: { dailyStats: DailyStat[] }): React.JSX.Ele
     <div>
       <h2 className="section-heading mb-3">Health Trend (7d)</h2>
       <div className="card-radar p-4">
-        <div className="flex items-center justify-center gap-3 sm:gap-4">
+        <div className="flex items-center justify-center gap-2 xs:gap-3 sm:gap-4">
           {dailyStats.map(day => (
-            <div
+            <button
               key={day.date}
-              className="flex flex-col items-center gap-1.5 cursor-default"
+              type="button"
+              className="flex flex-col items-center gap-1.5 cursor-default min-w-[40px] min-h-[44px] justify-center"
               onMouseEnter={() => setHoveredDay(day)}
               onMouseLeave={() => setHoveredDay(null)}
+              onClick={() => setHoveredDay(prev => prev?.date === day.date ? null : day)}
+              aria-label={`${formatDate(day.date)}: ${day.status}`}
             >
               <StatusIndicator status={day.status} size="lg" />
-              <span className="text-[10px] font-mono text-lavender-dim">
+              <span className="text-[9px] xs:text-[10px] font-mono text-lavender-dim">
                 {formatDate(day.date)}
               </span>
-            </div>
+            </button>
           ))}
         </div>
 
@@ -539,26 +542,26 @@ function RecentTransfers({ transfers }: { transfers: Transfer[] }): React.JSX.El
   return (
     <div>
       <h2 className="section-heading mb-3">Recent Transfers</h2>
-      <div className="overflow-x-auto rounded-lg border border-ridge">
-        <table className="w-full min-w-[480px] text-sm" role="grid">
+      <div className="overflow-x-auto rounded-lg border border-ridge -mx-4 sm:mx-0">
+        <table className="w-full min-w-[280px] text-sm" role="grid">
           <thead className="bg-void-card border-b border-ridge">
             <tr>
-              <th className="px-3 py-3 text-left text-[10px] font-mono font-medium uppercase tracking-[0.15em] text-lavender-dim">
+              <th className="px-2 xs:px-3 py-2.5 xs:py-3 text-left text-[10px] font-mono font-medium uppercase tracking-[0.15em] text-lavender-dim">
                 Asset
               </th>
-              <th className="px-3 py-3 text-right text-[10px] font-mono font-medium uppercase tracking-[0.15em] text-lavender-dim">
+              <th className="px-2 xs:px-3 py-2.5 xs:py-3 text-right text-[10px] font-mono font-medium uppercase tracking-[0.15em] text-lavender-dim">
                 Amount
               </th>
-              <th className="px-3 py-3 text-center text-[10px] font-mono font-medium uppercase tracking-[0.15em] text-lavender-dim">
+              <th className="px-2 xs:px-3 py-2.5 xs:py-3 text-center text-[10px] font-mono font-medium uppercase tracking-[0.15em] text-lavender-dim">
                 Status
               </th>
-              <th className="px-3 py-3 text-right text-[10px] font-mono font-medium uppercase tracking-[0.15em] text-lavender-dim hidden sm:table-cell">
+              <th className="px-2 xs:px-3 py-2.5 xs:py-3 text-right text-[10px] font-mono font-medium uppercase tracking-[0.15em] text-lavender-dim hidden sm:table-cell">
                 Duration
               </th>
-              <th className="px-3 py-3 text-right text-[10px] font-mono font-medium uppercase tracking-[0.15em] text-lavender-dim hidden sm:table-cell">
+              <th className="px-2 xs:px-3 py-2.5 xs:py-3 text-right text-[10px] font-mono font-medium uppercase tracking-[0.15em] text-lavender-dim hidden sm:table-cell">
                 Time
               </th>
-              <th className="px-3 py-3 text-right text-[10px] font-mono font-medium uppercase tracking-[0.15em] text-lavender-dim hidden md:table-cell">
+              <th className="px-2 xs:px-3 py-2.5 xs:py-3 text-right text-[10px] font-mono font-medium uppercase tracking-[0.15em] text-lavender-dim hidden md:table-cell">
                 Tx
               </th>
             </tr>
@@ -573,22 +576,22 @@ function RecentTransfers({ transfers }: { transfers: Transfer[] }): React.JSX.El
             )}
             {transfers.map(tx => (
               <tr key={tx.transferId} className="bg-void-deep hover:bg-void-hover transition-colors">
-                <td className="px-3 py-2.5 font-mono text-xs text-gold-text">{tx.asset}</td>
-                <td className="px-3 py-2.5 text-right font-mono text-xs text-lavender tabular-nums">
+                <td className="px-2 xs:px-3 py-2.5 font-mono text-xs text-gold-text">{tx.asset}</td>
+                <td className="px-2 xs:px-3 py-2.5 text-right font-mono text-xs text-lavender tabular-nums">
                   {tx.amountUsd !== null ? formatUsd(tx.amountUsd) : tx.amount}
                 </td>
-                <td className="px-3 py-2.5 text-center">
+                <td className="px-2 xs:px-3 py-2.5 text-center">
                   <span className={`text-xs font-mono font-medium ${STATUS_COLOR[tx.status] ?? 'text-lavender-dim'}`}>
                     {tx.status}
                   </span>
                 </td>
-                <td className="px-3 py-2.5 text-right font-mono text-xs text-radar tabular-nums hidden sm:table-cell">
+                <td className="px-2 xs:px-3 py-2.5 text-right font-mono text-xs text-radar tabular-nums hidden sm:table-cell">
                   {formatDuration(tx.durationSeconds)}
                 </td>
-                <td className="px-3 py-2.5 text-right font-mono text-xs text-lavender-dim hidden sm:table-cell">
+                <td className="px-2 xs:px-3 py-2.5 text-right font-mono text-xs text-lavender-dim hidden sm:table-cell">
                   {timeAgo(tx.initiatedAt)}
                 </td>
-                <td className="px-3 py-2.5 text-right font-mono text-xs text-lavender-dim hidden md:table-cell">
+                <td className="px-2 xs:px-3 py-2.5 text-right font-mono text-xs text-lavender-dim hidden md:table-cell">
                   {truncateHash(tx.txHashSource)}
                 </td>
               </tr>
@@ -734,17 +737,17 @@ export default function CorridorDetailPage({
     <div className="min-h-screen bg-void-deep radar-grid">
       {/* Header bar — matches dashboard */}
       <header className="sticky top-0 z-20 border-b border-ridge bg-void/95 backdrop-blur-md gold-accent-top">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <div className="flex h-14 items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="relative h-7 w-7 flex items-center justify-center">
+        <div className="mx-auto max-w-7xl px-3 xs:px-4 sm:px-6 lg:px-8">
+          <div className="flex h-12 xs:h-14 items-center justify-between">
+            <div className="flex items-center gap-2 xs:gap-3">
+              <div className="relative h-6 w-6 xs:h-7 xs:w-7 flex items-center justify-center flex-shrink-0">
                 <div className="absolute inset-0 rounded-full border border-gold/30" />
                 <div className="absolute inset-1 rounded-full border border-gold/20" />
                 <div className="h-1.5 w-1.5 rounded-full bg-gold animate-glow" />
               </div>
               <Link
                 href="/"
-                className="text-sm font-bold tracking-[0.25em] text-gold-text uppercase hover:text-gold-bright transition-colors"
+                className="text-xs xs:text-sm font-bold tracking-[0.15em] xs:tracking-[0.25em] text-gold-text uppercase hover:text-gold-bright transition-colors"
               >
                 Corridor Scout
               </Link>
@@ -754,7 +757,7 @@ export default function CorridorDetailPage({
       </header>
 
       {/* Main content */}
-      <main className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+      <main className="mx-auto max-w-7xl px-3 xs:px-4 sm:px-6 lg:px-8 py-4 xs:py-6 space-y-4 xs:space-y-6">
         {/* Loading state */}
         {detailLoading && <DetailSkeleton />}
 

@@ -103,7 +103,7 @@ export function AlertList(): React.JSX.Element {
         <Link
           key={anomaly.id}
           href={`/corridors/${anomaly.corridorId}`}
-          className={`flex items-start gap-3 p-3 card-radar border-l-2 ${SEVERITY_BORDER[anomaly.severity]} hover:border-ridge-bright min-w-0`}
+          className={`flex items-start gap-2 xs:gap-3 p-2.5 xs:p-3 card-radar border-l-2 ${SEVERITY_BORDER[anomaly.severity]} hover:border-ridge-bright min-w-0 min-h-[44px]`}
         >
           {/* Severity dot + label */}
           <div className="flex flex-col items-center gap-1 flex-shrink-0 pt-0.5">
@@ -132,7 +132,7 @@ export function AlertList(): React.JSX.Element {
       {(data?.anomalies.length ?? 0) > 5 && (
         <button
           onClick={() => setExpanded(e => !e)}
-          className="w-full text-xs font-mono text-gold-dim hover:text-gold transition-colors py-1.5 text-center tracking-wider uppercase"
+          className="w-full text-xs font-mono text-gold-dim hover:text-gold transition-colors py-2.5 min-h-[44px] text-center tracking-wider uppercase"
           type="button"
         >
           {expanded

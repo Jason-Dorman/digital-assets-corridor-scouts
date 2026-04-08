@@ -54,10 +54,10 @@ interface ImpactResult {
 }
 
 const selectClasses =
-  'w-full bg-void-deep border border-ridge rounded px-3 py-2 text-sm text-lavender font-mono focus:outline-none focus:ring-1 focus:ring-gold/50 focus:border-gold/50 transition-colors';
+  'w-full bg-void-deep border border-ridge rounded px-3 py-2 min-h-[44px] text-sm text-lavender font-mono focus:outline-none focus:ring-1 focus:ring-gold/50 focus:border-gold/50 transition-colors';
 
 const inputClasses =
-  'w-full bg-void-deep border border-ridge rounded px-3 py-2 text-sm text-gold-bright font-mono placeholder-lavender-dim focus:outline-none focus:ring-1 focus:ring-gold/50 focus:border-gold/50 transition-colors';
+  'w-full bg-void-deep border border-ridge rounded px-3 py-2 min-h-[44px] text-sm text-gold-bright font-mono placeholder-lavender-dim focus:outline-none focus:ring-1 focus:ring-gold/50 focus:border-gold/50 transition-colors';
 
 export function ImpactCalculator(): React.JSX.Element {
   const [bridge, setBridge] = useState('across');
@@ -138,9 +138,9 @@ export function ImpactCalculator(): React.JSX.Element {
 
   return (
     <div className="space-y-4">
-      {/* Form */}
-      <div className="flex flex-wrap gap-2 items-end">
-        <div className="flex-1 min-w-[120px]">
+      {/* Form — stacks vertically on small screens, wraps on larger */}
+      <div className="grid grid-cols-1 xs:grid-cols-2 sm:grid-cols-[1fr_1fr_1fr_1fr_auto] gap-2 items-end">
+        <div className="xs:col-span-2 sm:col-span-1">
           <label className="block text-xs text-gold-dim font-mono mb-1 tracking-wider uppercase" htmlFor="impact-amount">
             Amount (USD)
           </label>
@@ -155,7 +155,7 @@ export function ImpactCalculator(): React.JSX.Element {
           />
         </div>
 
-        <div className="flex-1 min-w-[100px]">
+        <div>
           <label className="block text-xs text-gold-dim font-mono mb-1 tracking-wider uppercase" htmlFor="impact-bridge">
             Bridge
           </label>
@@ -173,7 +173,7 @@ export function ImpactCalculator(): React.JSX.Element {
           </select>
         </div>
 
-        <div className="flex-1 min-w-[100px]">
+        <div>
           <label className="block text-xs text-gold-dim font-mono mb-1 tracking-wider uppercase" htmlFor="impact-source">
             From
           </label>
@@ -189,7 +189,7 @@ export function ImpactCalculator(): React.JSX.Element {
           </select>
         </div>
 
-        <div className="flex-1 min-w-[100px]">
+        <div>
           <label className="block text-xs text-gold-dim font-mono mb-1 tracking-wider uppercase" htmlFor="impact-dest">
             To
           </label>
@@ -209,7 +209,7 @@ export function ImpactCalculator(): React.JSX.Element {
           onClick={handleSubmit}
           disabled={loading}
           type="button"
-          className="flex-shrink-0 px-5 py-2 bg-gold/20 hover:bg-gold/30 border border-gold/40 hover:border-gold/60 disabled:opacity-40 disabled:cursor-not-allowed text-gold-bright text-sm font-mono font-semibold rounded transition-all focus:outline-none focus:ring-2 focus:ring-gold/30 focus:ring-offset-2 focus:ring-offset-void-card tracking-wider uppercase"
+          className="w-full sm:w-auto px-5 py-2 min-h-[44px] bg-gold/20 hover:bg-gold/30 border border-gold/40 hover:border-gold/60 disabled:opacity-40 disabled:cursor-not-allowed text-gold-bright text-sm font-mono font-semibold rounded transition-all focus:outline-none focus:ring-2 focus:ring-gold/30 focus:ring-offset-2 focus:ring-offset-void-card tracking-wider uppercase"
         >
           {loading ? 'Scanning...' : 'Check Impact'}
         </button>
@@ -223,7 +223,7 @@ export function ImpactCalculator(): React.JSX.Element {
       {/* Result */}
       {result && (
         <div className="bg-void-deep rounded-lg border border-ridge p-4 space-y-3">
-          <div className="flex flex-wrap gap-4">
+          <div className="grid grid-cols-2 xs:grid-cols-3 sm:flex sm:flex-wrap gap-3 sm:gap-4">
             {/* Impact level */}
             <div>
               <div className="text-xs text-gold-dim font-mono mb-1 uppercase tracking-wider">Impact</div>

@@ -80,6 +80,11 @@
     background: linear-gradient(90deg, transparent, #c9a227, transparent);
   }
 
+  /* Touch-friendly interactive targets (min 44px per WCAG) */
+  .touch-target {
+    @apply min-h-[44px] min-w-[44px];
+  }
+
   /* Radar pulse keyframe for live dots */
   .radar-ping {
     animation: radar-ping 2s cubic-bezier(0, 0, 0.2, 1) infinite;

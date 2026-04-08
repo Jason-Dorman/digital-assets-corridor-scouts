@@ -110,16 +110,16 @@ export function FlightVelocity(): React.JSX.Element {
         return (
           <div
             key={chain.chain}
-            className="flex items-center gap-3 group"
+            className="flex items-center gap-1.5 xs:gap-3 group"
             title={`Net flow: ${formatUsd(chain.netFlowUsd)} | TVL: $${(chain.tvlNowUsd / 1_000_000).toFixed(0)}M`}
           >
             {/* Chain abbr */}
-            <span className="w-12 text-xs font-mono text-gold-dim flex-shrink-0 text-right tracking-wider">
+            <span className="w-10 xs:w-12 text-[10px] xs:text-xs font-mono text-gold-dim flex-shrink-0 text-right tracking-wider">
               {CHAIN_ABBR[chain.chain] ?? chain.chain.toUpperCase().slice(0, 5)}
             </span>
 
             {/* Bar */}
-            <div className="flex-1 h-3.5 bg-void-deep rounded overflow-hidden min-w-0 border border-ridge/50">
+            <div className="flex-1 h-3 xs:h-3.5 bg-void-deep rounded overflow-hidden min-w-0 border border-ridge/50">
               <div
                 className={`h-full rounded-sm transition-all duration-700 ${cfg.barColor} opacity-80 group-hover:opacity-100`}
                 style={{ width: `${barPct}%` }}
@@ -127,12 +127,12 @@ export function FlightVelocity(): React.JSX.Element {
             </div>
 
             {/* LFV % */}
-            <span className={`w-14 text-right text-xs font-mono font-semibold ${cfg.textColor}`}>
+            <span className={`w-12 xs:w-14 text-right text-[10px] xs:text-xs font-mono font-semibold ${cfg.textColor}`}>
               {pctLabel}
             </span>
 
-            {/* Interpretation label */}
-            <span className={`w-20 text-xs font-mono ${cfg.textColor} flex-shrink-0`}>
+            {/* Interpretation label — hidden on smallest screens */}
+            <span className={`hidden xs:inline w-20 text-xs font-mono ${cfg.textColor} flex-shrink-0`}>
               {cfg.icon && (
                 <span className="inline-flex items-center justify-center h-4 w-4 rounded-full bg-red-500/20 text-red-400 text-[10px] font-bold mr-1">
                   {cfg.icon}

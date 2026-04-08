@@ -74,7 +74,7 @@ function formatDuration(seconds: number | null): string {
 }
 
 const filterSelectClasses =
-  'bg-void-deep border border-ridge rounded px-2 py-1.5 text-xs text-lavender font-mono focus:outline-none focus:ring-1 focus:ring-gold/40 focus:border-gold/40 min-w-[80px] transition-colors';
+  'bg-void-deep border border-ridge rounded px-2 py-2 text-xs text-lavender font-mono focus:outline-none focus:ring-1 focus:ring-gold/40 focus:border-gold/40 min-w-0 xs:min-w-[80px] min-h-[44px] transition-colors';
 
 interface ThProps {
   label: string;
@@ -89,7 +89,7 @@ interface ThProps {
 function Th({ label, field, currentSort, currentOrder, onSort, className = '', hideOnMobile }: ThProps): React.JSX.Element {
   const active = field && currentSort === field;
   const arrow = active ? (currentOrder === 'asc' ? ' \u2191' : ' \u2193') : '';
-  const base = `px-3 py-3 text-left text-[10px] font-mono font-medium uppercase tracking-[0.15em] select-none ${className}`;
+  const base = `px-2 xs:px-3 py-2.5 xs:py-3 text-left text-[10px] font-mono font-medium uppercase tracking-[0.15em] select-none ${className}`;
   const mobile = hideOnMobile ? 'hidden sm:table-cell' : '';
   const color = active ? 'text-gold' : 'text-lavender-dim';
 
@@ -143,7 +143,7 @@ export function CorridorTable(): React.JSX.Element {
   return (
     <div className="space-y-3">
       {/* Filters */}
-      <div className="flex flex-wrap gap-2">
+      <div className="grid grid-cols-3 xs:flex xs:flex-wrap gap-2">
         <select
           value={filterBridge}
           onChange={e => { setFilterBridge(e.target.value); setFilterSource(''); setFilterDest(''); }}
@@ -184,14 +184,14 @@ export function CorridorTable(): React.JSX.Element {
           <button
             type="button"
             onClick={() => { setFilterBridge(''); setFilterSource(''); setFilterDest(''); }}
-            className="text-xs font-mono text-gold-dim hover:text-gold transition-colors px-2 py-1.5 tracking-wider uppercase"
+            className="text-xs font-mono text-gold-dim hover:text-gold transition-colors px-2 py-2 min-h-[44px] tracking-wider uppercase"
           >
             [ Clear ]
           </button>
         )}
 
         {data && (
-          <span className="text-xs text-lavender-dim font-mono ml-auto self-center">
+          <span className="col-span-3 xs:col-span-1 text-xs text-lavender-dim font-mono xs:ml-auto self-center text-center xs:text-right">
             {data.total} corridor{data.total !== 1 ? 's' : ''}
           </span>
         )}
@@ -243,12 +243,12 @@ export function CorridorTable(): React.JSX.Element {
               data?.corridors.map(corridor => (
                 <tr
                   key={corridor.corridorId}
-                  className="bg-void-deep hover:bg-void-hover transition-colors cursor-pointer"
+                  className="bg-void-deep hover:bg-void-hover transition-colors cursor-pointer min-h-[44px]"
                   onClick={() => { window.location.href = `/corridors/${corridor.corridorId}`; }}
                   role="row"
                 >
                   {/* Bridge */}
-                  <td className="px-3 py-3 font-mono font-medium text-gold-text whitespace-nowrap text-xs tracking-wider">
+                  <td className="px-2 xs:px-3 py-2.5 xs:py-3 font-mono font-medium text-gold-text whitespace-nowrap text-xs tracking-wider">
                     <Link
                       href={`/corridors/${corridor.corridorId}`}
                       className="hover:text-gold-bright focus:outline-none focus:underline"
@@ -259,29 +259,29 @@ export function CorridorTable(): React.JSX.Element {
                   </td>
 
                   {/* Route */}
-                  <td className="px-3 py-3 text-lavender whitespace-nowrap font-mono text-xs">
+                  <td className="px-2 xs:px-3 py-2.5 xs:py-3 text-lavender whitespace-nowrap font-mono text-xs">
                     {CHAIN_ABBR[corridor.sourceChain] ?? corridor.sourceChain}
-                    <span className="text-ridge-bright mx-1.5">&rarr;</span>
+                    <span className="text-ridge-bright mx-1 xs:mx-1.5">&rarr;</span>
                     {CHAIN_ABBR[corridor.destChain] ?? corridor.destChain}
                   </td>
 
                   {/* Health */}
-                  <td className="px-3 py-3 text-center">
+                  <td className="px-2 xs:px-3 py-2.5 xs:py-3 text-center">
                     <StatusIndicator status={corridor.status} size="sm" />
                   </td>
 
                   {/* p50 */}
-                  <td className="px-3 py-3 text-right font-mono text-xs text-radar">
+                  <td className="px-2 xs:px-3 py-2.5 xs:py-3 text-right font-mono text-xs text-radar">
                     {formatDuration(corridor.metrics.p50DurationSeconds)}
                   </td>
 
                   {/* p90 */}
-                  <td className="px-3 py-3 text-right font-mono text-xs text-radar hidden sm:table-cell">
+                  <td className="px-2 xs:px-3 py-2.5 xs:py-3 text-right font-mono text-xs text-radar hidden sm:table-cell">
                     {formatDuration(corridor.metrics.p90DurationSeconds)}
                   </td>
 
                   {/* Fragility */}
-                  <td className="px-3 py-3 hidden sm:table-cell" title={corridor.pool.fragilityReason}>
+                  <td className="px-2 xs:px-3 py-2.5 xs:py-3 hidden sm:table-cell" title={corridor.pool.fragilityReason}>
                     <FragilityBadge level={corridor.pool.fragility} />
                   </td>
                 </tr>
