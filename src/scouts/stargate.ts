@@ -27,6 +27,7 @@
 
 import { Contract, Interface, type Log } from 'ethers';
 
+import { logger } from '../lib/logger';
 import { BaseScout } from './base';
 import {
   CHAIN_IDS,
@@ -90,10 +91,10 @@ const POOL_IFACE = new Interface(POOL_ABI);
 // ---------------------------------------------------------------------------
 
 export class StargateScout extends BaseScout {
-  constructor(onEvent: (event: import('../types').TransferEvent) => Promise<void>) {
+  constructor(onEvent: (event: TransferEvent) => Promise<void>) {
     super(STARGATE_SCOUT_CHAINS, onEvent);
     // Log once at construction — not per event — to avoid log spam.
-    console.warn(
+    logger.warn(
       '[StargateScout] parseFillEvent is a no-op in Phase 0. ' +
         'Stargate transfers will be marked stuck after the 30-min threshold ' +
         'and reconciled by a future job.',
@@ -157,12 +158,12 @@ export class StargateScout extends BaseScout {
               await this.emit(event);
             }
           } catch (error) {
-            console.error('[StargateScout] Failed to process Swap event', {
+            logger.error('[StargateScout] Failed to process Swap event', {
               chain,
               poolId,
               blockNumber: log.blockNumber,
               txHash: log.transactionHash,
-              error,
+              error: error instanceof Error ? error.message : String(error),
             });
           }
         };
@@ -230,7 +231,7 @@ export class StargateScout extends BaseScout {
       // Swap event's chainId field is Stargate's internal ID, not EVM.
       const destChain = STARGATE_CHAIN_IDS[Number(stargateDestChainId)];
       if (destChain === undefined) {
-        console.warn('[StargateScout] Skipping swap — unrecognised Stargate destination chain', {
+        logger.warn('[StargateScout] Skipping swap — unrecognised Stargate destination chain', {
           stargateChainId: stargateDestChainId.toString(),
           txHash: log.transactionHash,
         });
@@ -242,7 +243,7 @@ export class StargateScout extends BaseScout {
       // token's address on the SOURCE chain — the token the user deposited.
       const tokenAddress = STARGATE_POOL_TOKEN_ADDRESSES[sourceChain]?.[Number(dstPoolId)];
       if (tokenAddress === undefined) {
-        console.warn('[StargateScout] Skipping swap — unknown pool ID on source chain', {
+        logger.warn('[StargateScout] Skipping swap — unknown pool ID on source chain', {
           sourceChain,
           dstPoolId: dstPoolId.toString(),
           txHash: log.transactionHash,
@@ -267,9 +268,9 @@ export class StargateScout extends BaseScout {
         blockNumber: BigInt(log.blockNumber),
       };
     } catch (error) {
-      console.error('[StargateScout] Failed to decode Swap log', {
+      logger.error('[StargateScout] Failed to decode Swap log', {
         blockNumber: log.blockNumber,
-        error,
+        error: error instanceof Error ? error.message : String(error),
       });
       return null;
     }

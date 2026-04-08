@@ -34,6 +34,7 @@
 
 import { Contract } from 'ethers';
 
+import { logger } from '../lib/logger';
 import { db } from '../lib/db';
 import { getProvider } from '../lib/rpc';
 import { publish } from '../lib/redis';
@@ -124,7 +125,7 @@ export class PoolProcessor {
       if (result.status === 'fulfilled') {
         snapshots.push(...result.value);
       } else {
-        console.error('[PoolProcessor] Bridge fetch failed:', result.reason);
+        logger.error('[PoolProcessor] Bridge fetch failed', { reason: result.reason instanceof Error ? result.reason.message : String(result.reason) });
       }
     }
 
@@ -171,10 +172,7 @@ export class PoolProcessor {
             utilization: null,
           });
         } catch (error) {
-          console.error(
-            `[PoolProcessor] Across SpokePool balanceOf failed: chain=${chain} token=${tokenAddress}`,
-            error,
-          );
+          logger.error(`[PoolProcessor] Across SpokePool balanceOf failed: chain=${chain} token=${tokenAddress}`, { error: error instanceof Error ? error.message : String(error) });
         }
       }
     }
@@ -241,10 +239,7 @@ export class PoolProcessor {
           utilization,
         });
       } catch (error) {
-        console.error(
-          `[PoolProcessor] Across HubPool pooledTokens failed: token=${tokenAddress}`,
-          error,
-        );
+        logger.error(`[PoolProcessor] Across HubPool pooledTokens failed: token=${tokenAddress}`, { error: error instanceof Error ? error.message : String(error) });
       }
     }
 
@@ -295,7 +290,7 @@ export class PoolProcessor {
     try {
       prices = await priceService.getPrices(uniqueAssets);
     } catch (error) {
-      console.warn('[PoolProcessor] Price fetch failed — storing snapshots without USD values', { error });
+      logger.warn('[PoolProcessor] Price fetch failed — storing snapshots without USD values', { error: error instanceof Error ? error.message : String(error) });
     }
 
     let stored = 0;
@@ -319,21 +314,16 @@ export class PoolProcessor {
         });
         stored++;
       } catch (error) {
-        console.error(
-          `[PoolProcessor] Failed to store snapshot: poolId=${snapshot.poolId}`,
-          error,
-        );
+        logger.error(`[PoolProcessor] Failed to store snapshot: poolId=${snapshot.poolId}`, { error: error instanceof Error ? error.message : String(error) });
       }
     }
 
-    console.info(
-      `[PoolProcessor] Stored ${stored}/${snapshots.length} pool snapshots at ${recordedAt.toISOString()}`,
-    );
+    logger.info(`[PoolProcessor] Stored ${stored}/${snapshots.length} pool snapshots at ${recordedAt.toISOString()}`);
 
     try {
       await publish(REDIS_CHANNELS.POOL_SNAPSHOT, { recordedAt, stored, total: snapshots.length });
     } catch (error) {
-      console.warn('[PoolProcessor] Failed to broadcast pool:snapshot — snapshots are persisted', { error });
+      logger.warn('[PoolProcessor] Failed to broadcast pool:snapshot — snapshots are persisted', { error: error instanceof Error ? error.message : String(error) });
     }
   }
 }

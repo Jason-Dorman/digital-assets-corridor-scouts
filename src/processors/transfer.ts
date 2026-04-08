@@ -10,8 +10,9 @@
  *   - Falls back to a database lookup when the matching initiation is not in
  *     memory (e.g. after a process restart).
  *   - Completions with no matching initiation in either memory or the database
- *     are logged as warnings and discarded — they are tracked by the
- *     reconciliation job (docs/UPDATED-SPEC.md "Data Integrity").
+ *     are enqueued in the orphan queue for periodic retry (SYSTEM-SPEC.md §7
+ *     "Missing Transfer Match"). Orphans are retried every 5 minutes and
+ *     discarded after 1 hour.
  *
  * Field mapping from TransferEvent to the transfers table:
  *   initiation: timestamp → initiatedAt, txHash → txHashSource, blockNumber → blockInitiated
@@ -26,11 +27,13 @@
  *   6. Store asset (canonical) and assetRaw (null when same as canonical)
  */
 
+import { logger } from '../lib/logger';
 import { db } from '../lib/db';
 import { publish } from '../lib/redis';
 import { CHAIN_IDS, REDIS_CHANNELS, getSizeBucket } from '../lib/constants';
 import { getTokenInfo, normalizeAmount } from '../lib/token-registry';
 import { priceService } from '../lib/price-service';
+import { OrphanQueue } from '../lib/orphan-queue';
 import type { TransferEvent } from '../types';
 
 export class TransferProcessor {
@@ -46,6 +49,12 @@ export class TransferProcessor {
    * a process restart.
    */
   private readonly pendingTransfers: Map<string, { event: TransferEvent; insertedAt: number }> = new Map();
+
+  /**
+   * Queue for unmatched completion events (SYSTEM-SPEC.md §7 "Missing Transfer Match").
+   * Completions with no matching initiation are enqueued here and retried periodically.
+   */
+  readonly orphanQueue = new OrphanQueue();
 
   // ---------------------------------------------------------------------------
   // Public API
@@ -80,10 +89,10 @@ export class TransferProcessor {
     try {
       price = await priceService.getPrice(symbol);
     } catch (error) {
-      console.warn('[TransferProcessor] Price fetch failed — storing transfer without USD value', {
+      logger.warn('[TransferProcessor] Price fetch failed — storing transfer without USD value', {
         symbol,
         transferId: event.transferId,
-        error,
+        error: error instanceof Error ? error.message : String(error),
       });
     }
 
@@ -124,9 +133,9 @@ export class TransferProcessor {
     try {
       await publish(REDIS_CHANNELS.TRANSFER_INITIATED, event);
     } catch (error) {
-      console.warn('[TransferProcessor] Failed to broadcast transfer:initiated — transfer is persisted', {
+      logger.warn('[TransferProcessor] Failed to broadcast transfer:initiated — transfer is persisted', {
         transferId: event.transferId,
-        error,
+        error: error instanceof Error ? error.message : String(error),
       });
     }
   }
@@ -151,7 +160,7 @@ export class TransferProcessor {
       });
 
       if (!dbTransfer) {
-        console.warn(`[TransferProcessor] Completion without initiation: ${event.transferId}`);
+        this.orphanQueue.enqueue(event);
         return;
       }
 
@@ -163,7 +172,7 @@ export class TransferProcessor {
     );
 
     if (rawDurationSeconds < 0) {
-      console.warn('[TransferProcessor] Negative durationSeconds clamped to 0 — likely clock drift between chains', {
+      logger.warn('[TransferProcessor] Negative durationSeconds clamped to 0 — likely clock drift between chains', {
         transferId: event.transferId,
         rawDurationSeconds,
         initiatedAt: initiatedAt.toISOString(),
@@ -189,9 +198,9 @@ export class TransferProcessor {
     try {
       await publish(REDIS_CHANNELS.TRANSFER_COMPLETED, { ...event, durationSeconds });
     } catch (error) {
-      console.warn('[TransferProcessor] Failed to broadcast transfer:completed — transfer is persisted', {
+      logger.warn('[TransferProcessor] Failed to broadcast transfer:completed — transfer is persisted', {
         transferId: event.transferId,
-        error,
+        error: error instanceof Error ? error.message : String(error),
       });
     }
   }
@@ -208,6 +217,55 @@ export class TransferProcessor {
    */
   clearPending(transferId: string): void {
     this.pendingTransfers.delete(transferId);
+  }
+
+  /**
+   * Attempt to match orphaned completions against the database.
+   *
+   * Should be called periodically (e.g. by a cron job or stuck-detector).
+   * Also prunes expired orphans (> 1 hour old) on each run.
+   */
+  async retryOrphans(): Promise<{ matched: number; pruned: number }> {
+    const matched = await this.orphanQueue.retryMatches(async (event) => {
+      const dbTransfer = await db.transfer.findUnique({
+        where: { transferId: event.transferId },
+        select: { initiatedAt: true },
+      });
+      if (!dbTransfer) return false;
+
+      // Found the initiation — process the completion normally
+      const rawDurationSeconds = Math.floor(
+        (event.timestamp.getTime() - dbTransfer.initiatedAt.getTime()) / 1000,
+      );
+      const durationSeconds = Math.max(0, rawDurationSeconds);
+
+      await db.transfer.update({
+        where: { transferId: event.transferId },
+        data: {
+          completedAt: event.timestamp,
+          durationSeconds,
+          status: 'completed',
+          txHashDest: event.txHash,
+          blockCompleted: event.blockNumber,
+        },
+      });
+
+      this.pendingTransfers.delete(event.transferId);
+
+      try {
+        await publish(REDIS_CHANNELS.TRANSFER_COMPLETED, { ...event, durationSeconds });
+      } catch (error) {
+        logger.warn('[TransferProcessor] Failed to broadcast orphan completion', {
+          transferId: event.transferId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+
+      return true;
+    });
+
+    const pruned = this.orphanQueue.pruneExpired();
+    return { matched, pruned };
   }
 
   /**

@@ -15,6 +15,7 @@
 
 import { Contract, Interface, type Log } from 'ethers';
 
+import { logger } from '../lib/logger';
 import { BaseScout } from './base';
 import {
   ACROSS_SPOKEPOOL_ADDRESSES,
@@ -66,7 +67,7 @@ const SPOKE_POOL_IFACE = new Interface(SPOKE_POOL_ABI);
 // ---------------------------------------------------------------------------
 
 export class AcrossScout extends BaseScout {
-  constructor(onEvent: (event: import('../types').TransferEvent) => Promise<void>) {
+  constructor(onEvent: (event: TransferEvent) => Promise<void>) {
     super(ACROSS_SCOUT_CHAINS, onEvent);
   }
 
@@ -98,7 +99,7 @@ export class AcrossScout extends BaseScout {
       try {
         address = this.getContractAddress(chain);
       } catch (error) {
-        console.error('[AcrossScout] No contract address — skipping chain', { chain, error });
+        logger.error('[AcrossScout] No contract address — skipping chain', { chain, error: error instanceof Error ? error.message : String(error) });
         continue;
       }
 
@@ -120,11 +121,11 @@ export class AcrossScout extends BaseScout {
             await this.emit(event);
           }
         } catch (error) {
-          console.error('[AcrossScout] Failed to process V3FundsDeposited', {
+          logger.error('[AcrossScout] Failed to process V3FundsDeposited', {
             chain,
             blockNumber: log.blockNumber,
             txHash: log.transactionHash,
-            error,
+            error: error instanceof Error ? error.message : String(error),
           });
         }
       };
@@ -139,11 +140,11 @@ export class AcrossScout extends BaseScout {
             await this.emit(event);
           }
         } catch (error) {
-          console.error('[AcrossScout] Failed to process FilledV3Relay', {
+          logger.error('[AcrossScout] Failed to process FilledV3Relay', {
             chain,
             blockNumber: log.blockNumber,
             txHash: log.transactionHash,
-            error,
+            error: error instanceof Error ? error.message : String(error),
           });
         }
       };
@@ -207,7 +208,7 @@ export class AcrossScout extends BaseScout {
 
       const destChain = CHAIN_ID_TO_NAME.get(Number(destinationChainId));
       if (destChain === undefined) {
-        console.warn('[AcrossScout] Skipping deposit — unrecognised destination chain', {
+        logger.warn('[AcrossScout] Skipping deposit — unrecognised destination chain', {
           destinationChainId: destinationChainId.toString(),
           depositId: depositId.toString(),
         });
@@ -230,9 +231,9 @@ export class AcrossScout extends BaseScout {
         blockNumber: BigInt(log.blockNumber),
       };
     } catch (error) {
-      console.error('[AcrossScout] Failed to decode V3FundsDeposited log', {
+      logger.error('[AcrossScout] Failed to decode V3FundsDeposited log', {
         blockNumber: log.blockNumber,
-        error,
+        error: error instanceof Error ? error.message : String(error),
       });
       return null;
     }
@@ -268,7 +269,7 @@ export class AcrossScout extends BaseScout {
 
       const sourceChain = CHAIN_ID_TO_NAME.get(Number(originChainId));
       if (sourceChain === undefined) {
-        console.warn('[AcrossScout] Skipping fill — unrecognised origin chain', {
+        logger.warn('[AcrossScout] Skipping fill — unrecognised origin chain', {
           originChainId: originChainId.toString(),
           depositId: depositId.toString(),
         });
@@ -296,9 +297,9 @@ export class AcrossScout extends BaseScout {
         blockNumber: BigInt(log.blockNumber),
       };
     } catch (error) {
-      console.error('[AcrossScout] Failed to decode FilledV3Relay log', {
+      logger.error('[AcrossScout] Failed to decode FilledV3Relay log', {
         blockNumber: log.blockNumber,
-        error,
+        error: error instanceof Error ? error.message : String(error),
       });
       return null;
     }

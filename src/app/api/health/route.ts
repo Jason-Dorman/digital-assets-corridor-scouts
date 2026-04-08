@@ -15,6 +15,7 @@
 
 import { NextResponse } from 'next/server';
 import { db } from '../../../lib/db';
+import { dbBreaker } from '../../../lib/db-breaker';
 import { redis } from '../../../lib/redis';
 import {
   fetchAllCorridorMetrics,
@@ -80,13 +81,23 @@ export async function GET(): Promise<NextResponse> {
 // Computation
 // ---------------------------------------------------------------------------
 
-async function computeHealth(metricsResult: CorridorDataResult) {
+async function computeHealth(metricsResult: CorridorDataResult): Promise<{
+  status: 'operational' | 'degraded' | 'down';
+  corridorsMonitored: number;
+  corridorsHealthy: number;
+  corridorsDegraded: number;
+  corridorsDown: number;
+  transfers24h: number;
+  successRate24h: number | null;
+  activeAnomalies: number;
+  updatedAt: string;
+}> {
   const now = new Date();
 
   const [{ corridors, totalTransfers24h, overallSuccessRate24h }, activeAnomalyCount] =
     await Promise.all([
       Promise.resolve(metricsResult),
-      db.anomaly.count({ where: { resolvedAt: null } }),
+      dbBreaker.execute(() => db.anomaly.count({ where: { resolvedAt: null } })),
     ]);
 
   const corridorsHealthy = corridors.filter(c => c.status === 'healthy').length;

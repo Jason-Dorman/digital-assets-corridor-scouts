@@ -9,7 +9,9 @@
  * a scout. bigint fields are serialised as decimal strings for JSON
  * compatibility.
  */
-export type { BridgeName, ChainName } from '../lib/constants';
+import type { BridgeName, ChainName } from '../lib/constants';
+
+export type { BridgeName, ChainName };
 
 // ---------------------------------------------------------------------------
 // docs/DATA-MODEL.md §1.1
@@ -76,9 +78,9 @@ export type TransferSizeBucket = 'small' | 'medium' | 'large' | 'whale';
 export interface TransferEvent {
   type: 'initiation' | 'completion';
   transferId: string;
-  bridge: import('../lib/constants').BridgeName;
-  sourceChain: import('../lib/constants').ChainName;
-  destChain: import('../lib/constants').ChainName;
+  bridge: BridgeName;
+  sourceChain: ChainName;
+  destChain: ChainName;
   /** Raw on-chain token address (lowercase). Processor resolves to symbol. */
   tokenAddress: string;
   /** Raw on-chain amount as bigint. Processor normalises for storage. */

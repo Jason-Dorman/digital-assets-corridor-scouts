@@ -14,6 +14,7 @@
 
 import { NextResponse } from 'next/server';
 import { db } from '../../../lib/db';
+import { dbBreaker } from '../../../lib/db-breaker';
 import { redis } from '../../../lib/redis';
 import { calculateLFV } from '../../../calculators/lfv';
 import { round2, round3 } from '../../../lib/round';
@@ -67,7 +68,20 @@ export async function GET(): Promise<NextResponse> {
 // Computation
 // ---------------------------------------------------------------------------
 
-async function computeFlight() {
+async function computeFlight(): Promise<{
+  chains: Array<{
+    chain: string;
+    lfv24h: number;
+    lfvAnnualized: number;
+    interpretation: string;
+    netFlowUsd: number;
+    tvlStartUsd: number;
+    tvlNowUsd: number;
+    poolsMonitored: number;
+    alert?: boolean;
+  }>;
+  updatedAt: string;
+}> {
   const now = new Date();
   const twentyFourHoursAgo = new Date(now.getTime() - 86_400_000);
 
@@ -76,21 +90,23 @@ async function computeFlight() {
   // Exclude HubPool aggregate rows (chain = 'ethereum_hub') — those represent
   // cross-chain aggregate TVL, not per-chain liquidity. Including them would
   // create a phantom 'ethereum_hub' chain in the LFV response.
-  const snapshots = await db.poolSnapshot.findMany({
-    where: {
-      recordedAt: { gte: twentyFourHoursAgo },
-      asset: { in: [...STABLECOINS] },
-      chain: { not: 'ethereum_hub' },
-    },
-    select: {
-      poolId: true,
-      chain: true,
-      tvlUsd: true,
-      recordedAt: true,
-    },
-    orderBy: { recordedAt: 'desc' },
-    take: ANOMALY_THRESHOLDS.MAX_POOL_SNAPSHOT_QUERY_ROWS,
-  });
+  const snapshots = await dbBreaker.execute(() =>
+    db.poolSnapshot.findMany({
+      where: {
+        recordedAt: { gte: twentyFourHoursAgo },
+        asset: { in: [...STABLECOINS] },
+        chain: { not: 'ethereum_hub' },
+      },
+      select: {
+        poolId: true,
+        chain: true,
+        tvlUsd: true,
+        recordedAt: true,
+      },
+      orderBy: { recordedAt: 'desc' },
+      take: ANOMALY_THRESHOLDS.MAX_POOL_SNAPSHOT_QUERY_ROWS,
+    }),
+  );
 
   if (snapshots.length === ANOMALY_THRESHOLDS.MAX_POOL_SNAPSHOT_QUERY_ROWS) {
     logger.warn('[api/flight] Pool snapshot query hit row cap – some chains may be missing', {
@@ -121,7 +137,8 @@ async function computeFlight() {
     const tvl = snap.tvlUsd ? Number(snap.tvlUsd) : 0;
     chainNow.set(chain, (chainNow.get(chain) ?? 0) + tvl);
     if (!chainPools.has(chain)) chainPools.set(chain, new Set());
-    chainPools.get(chain)!.add(poolId);
+    const poolSet = chainPools.get(chain);
+    if (poolSet) poolSet.add(poolId);
   }
 
   for (const [poolId, snap] of oldestPerPool.entries()) {
@@ -130,7 +147,8 @@ async function computeFlight() {
     chainStart.set(chain, (chainStart.get(chain) ?? 0) + tvl);
     // Ensure chain is registered even if only in oldestPerPool
     if (!chainPools.has(chain)) chainPools.set(chain, new Set());
-    chainPools.get(chain)!.add(poolId);
+    const poolSet2 = chainPools.get(chain);
+    if (poolSet2) poolSet2.add(poolId);
   }
 
   // Compute LFV per chain

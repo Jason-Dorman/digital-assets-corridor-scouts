@@ -39,6 +39,12 @@ jest.mock('../../../src/lib/rpc', () => ({
   getProvider: mockGetProvider,
 }));
 
+// Mock resilient-rpc to execute fn() directly without retry delays.
+// Retry logic is tested in retry.test.ts; here we isolate scout behaviour.
+jest.mock('../../../src/lib/resilient-rpc', () => ({
+  resilientRpcCall: async <T>(fn: (p?: unknown) => Promise<T>): Promise<T> => fn(),
+}));
+
 // Spread the real ethers module and replace only Contract so that Interface
 // (used both in the scout and in our test helpers) remains the real implementation.
 jest.mock('ethers', () => {
@@ -645,14 +651,20 @@ describe('deposit listener', () => {
     expect(emittedTimestamp.getTime()).toBeLessThanOrEqual(after.getTime());
   });
 
-  it('does NOT call onEvent when getBlock throws (logs error, swallows exception)', async () => {
+  it('falls back to wall-clock time and still emits when getBlock throws (graceful degradation)', async () => {
     mockGetBlock.mockRejectedValue(new Error('RPC timeout'));
     const log = encodeDepositLog();
-    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const consoleSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
 
+    const before = new Date();
     await invokeListener('V3FundsDeposited', log);
+    const after = new Date();
 
-    expect(mockOnEvent).not.toHaveBeenCalled();
+    // Event is still emitted with wall-clock fallback — never lose a transfer
+    expect(mockOnEvent).toHaveBeenCalledTimes(1);
+    const emittedTimestamp: Date = mockOnEvent.mock.calls[0][0].timestamp;
+    expect(emittedTimestamp.getTime()).toBeGreaterThanOrEqual(before.getTime());
+    expect(emittedTimestamp.getTime()).toBeLessThanOrEqual(after.getTime());
     consoleSpy.mockRestore();
   });
 });
@@ -704,14 +716,20 @@ describe('fill listener', () => {
     expect(emittedTimestamp.getTime()).toBeLessThanOrEqual(after.getTime());
   });
 
-  it('does NOT call onEvent when getBlock throws', async () => {
+  it('falls back to wall-clock time and still emits when getBlock throws (graceful degradation)', async () => {
     mockGetBlock.mockRejectedValue(new Error('RPC timeout'));
     const log = encodeFillLog();
-    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const consoleSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
 
+    const before = new Date();
     await invokeListener('FilledV3Relay', log);
+    const after = new Date();
 
-    expect(mockOnEvent).not.toHaveBeenCalled();
+    // Event is still emitted with wall-clock fallback — never lose a transfer
+    expect(mockOnEvent).toHaveBeenCalledTimes(1);
+    const emittedTimestamp: Date = mockOnEvent.mock.calls[0][0].timestamp;
+    expect(emittedTimestamp.getTime()).toBeGreaterThanOrEqual(before.getTime());
+    expect(emittedTimestamp.getTime()).toBeLessThanOrEqual(after.getTime());
     consoleSpy.mockRestore();
   });
 });

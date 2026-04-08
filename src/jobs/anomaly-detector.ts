@@ -25,6 +25,7 @@ import type { BridgeName } from '../lib/constants';
 
 import { db } from '../lib/db';
 import { logger } from '../lib/logger';
+import { calculatePercentile } from '../lib/stats';
 import {
   ANOMALY_THRESHOLDS,
   ANOMALY_SEVERITY_THRESHOLDS,
@@ -51,28 +52,8 @@ export interface AnomalyDetectorResult {
 // Pure functions — exported for unit testing
 // ---------------------------------------------------------------------------
 
-/**
- * Calculate the value at `percentile` (0–100) in an array of numbers.
- *
- * Uses linear interpolation between adjacent sorted values, matching the
- * formula in DATA-MODEL.md §10.1.
- *
- * Returns 0 when `values` is empty (safe: callers guard on empty arrays
- * before comparing p90 values).
- */
-export function calculatePercentile(values: number[], percentile: number): number {
-  if (values.length === 0) return 0;
-
-  const sorted = [...values].sort((a, b) => a - b);
-  const index = (percentile / 100) * (sorted.length - 1);
-  const lower = Math.floor(index);
-  const upper = Math.ceil(index);
-
-  if (lower === upper) return sorted[lower]!;
-
-  const fraction = index - lower;
-  return sorted[lower]! + (sorted[upper]! - sorted[lower]!) * fraction;
-}
+// Re-export for existing test imports
+export { calculatePercentile } from '../lib/stats';
 
 /**
  * Whether `currentP90` constitutes a latency spike relative to `historicalP90`.
@@ -287,12 +268,14 @@ export class AnomalyDetector {
             durations: [],
           });
         }
-        current.get(corridorId)!.durations.push(t.durationSeconds);
+        const cur = current.get(corridorId);
+        if (cur) cur.durations.push(t.durationSeconds);
       } else {
         // Historical baseline excludes the current window so an active spike
         // cannot dampen its own detection signal.
         if (!historical.has(corridorId)) historical.set(corridorId, []);
-        historical.get(corridorId)!.push(t.durationSeconds);
+        const hist = historical.get(corridorId);
+        if (hist) hist.push(t.durationSeconds);
       }
     }
 
@@ -429,10 +412,10 @@ export class AnomalyDetector {
         });
       }
 
-      const entry = corridors.get(corridorId)!;
-      if (t.status === 'completed') {
+      const entry = corridors.get(corridorId);
+      if (entry && t.status === 'completed') {
         entry.completed++;
-      } else {
+      } else if (entry) {
         // 'stuck' and 'failed' both count as failures (matches §10.2 logic)
         entry.failed++;
       }

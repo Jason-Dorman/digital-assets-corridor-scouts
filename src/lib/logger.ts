@@ -10,6 +10,7 @@
  * All internal callers import `logger` from here, so the swap is a one-file change.
  */
 
+/* eslint-disable no-console */
 const isDev = process.env.NODE_ENV !== 'production';
 
 type LogMeta = Record<string, unknown>;

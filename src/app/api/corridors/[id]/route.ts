@@ -17,9 +17,10 @@
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { db } from '../../../../lib/db';
+import { dbBreaker } from '../../../../lib/db-breaker';
 import { calculateHealthStatus } from '../../../../calculators/health';
 import { calculateFragility } from '../../../../calculators/fragility';
-import { calculatePercentile } from '../../../../lib/corridor-metrics';
+import { calculatePercentile, successRate } from '../../../../lib/stats';
 import { round2 } from '../../../../lib/round';
 import { logger } from '../../../../lib/logger';
 import { ANOMALY_THRESHOLDS, VALID_BRIDGES, VALID_CHAIN_NAMES, STABLECOINS } from '../../../../lib/constants';
@@ -83,43 +84,45 @@ export async function GET(
     const twentyFourHoursAgo = new Date(now.getTime() - 86_400_000);
     const sevenDaysAgo = new Date(now.getTime() - 7 * 86_400_000);
 
-    // All queries for this corridor run in parallel
-    const [transfers7d, activeAnomalies, poolSnapshots24h] = await Promise.all([
-      db.transfer.findMany({
-        where: { bridge, sourceChain, destChain, initiatedAt: { gte: sevenDaysAgo } },
-        select: {
-          transferId: true,
-          amount: true,
-          amountUsd: true,
-          asset: true,
-          status: true,
-          initiatedAt: true,
-          completedAt: true,
-          durationSeconds: true,
-          txHashSource: true,
-          txHashDest: true,
-        },
-        orderBy: { initiatedAt: 'desc' },
-        take: ANOMALY_THRESHOLDS.MAX_TRANSFER_QUERY_ROWS,
-      }),
-      db.anomaly.findMany({
-        where: { corridorId, resolvedAt: null },
-        orderBy: { detectedAt: 'desc' },
-      }),
-      // Fetch stablecoin pool snapshots for both dest and source chains so we can
-      // fall back to source-chain data if destChain has no snapshots.
-      // Ordered DESC so the first occurrence per poolId is the latest snapshot.
-      db.poolSnapshot.findMany({
-        where: {
-          bridge,
-          chain: { in: [destChain, sourceChain] },
-          asset: { in: [...STABLECOINS] },
-          recordedAt: { gte: twentyFourHoursAgo },
-        },
-        orderBy: { recordedAt: 'desc' },
-        take: ANOMALY_THRESHOLDS.MAX_POOL_SNAPSHOT_QUERY_ROWS,
-      }),
-    ]);
+    // All queries for this corridor run in parallel, wrapped in the DB circuit breaker.
+    const [transfers7d, activeAnomalies, poolSnapshots24h] = await dbBreaker.execute(() =>
+      Promise.all([
+        db.transfer.findMany({
+          where: { bridge, sourceChain, destChain, initiatedAt: { gte: sevenDaysAgo } },
+          select: {
+            transferId: true,
+            amount: true,
+            amountUsd: true,
+            asset: true,
+            status: true,
+            initiatedAt: true,
+            completedAt: true,
+            durationSeconds: true,
+            txHashSource: true,
+            txHashDest: true,
+          },
+          orderBy: { initiatedAt: 'desc' },
+          take: ANOMALY_THRESHOLDS.MAX_TRANSFER_QUERY_ROWS,
+        }),
+        db.anomaly.findMany({
+          where: { corridorId, resolvedAt: null },
+          orderBy: { detectedAt: 'desc' },
+        }),
+        // Fetch stablecoin pool snapshots for both dest and source chains so we can
+        // fall back to source-chain data if destChain has no snapshots.
+        // Ordered DESC so the first occurrence per poolId is the latest snapshot.
+        db.poolSnapshot.findMany({
+          where: {
+            bridge,
+            chain: { in: [destChain, sourceChain] },
+            asset: { in: [...STABLECOINS] },
+            recordedAt: { gte: twentyFourHoursAgo },
+          },
+          orderBy: { recordedAt: 'desc' },
+          take: ANOMALY_THRESHOLDS.MAX_POOL_SNAPSHOT_QUERY_ROWS,
+        }),
+      ]),
+    );
 
     // If we have no transfers AND no pool snapshots for this corridor, it is not
     // being monitored — returning zeros would silently misrepresent the corridor
@@ -301,7 +304,14 @@ type TransferRow = {
   amountUsd: unknown;
 };
 
-function buildHourlyStats(transfers: TransferRow[], now: Date) {
+function buildHourlyStats(transfers: TransferRow[], now: Date): Array<{
+  hour: string;
+  transferCount: number;
+  successRate: number | null;
+  p50DurationSeconds: number | null;
+  p90DurationSeconds: number | null;
+  volumeUsd: number;
+}> {
   const stats: Array<{
     hour: string;
     transferCount: number;
@@ -342,7 +352,14 @@ function buildHourlyStats(transfers: TransferRow[], now: Date) {
   return stats;
 }
 
-function buildDailyStats(transfers: TransferRow[], from: Date) {
+function buildDailyStats(transfers: TransferRow[], from: Date): Array<{
+  date: string;
+  transferCount: number;
+  successRate: number | null;
+  avgDurationSeconds: number | null;
+  volumeUsd: number;
+  status: 'healthy' | 'degraded' | 'down';
+}> {
   // Bucket by UTC date string (YYYY-MM-DD)
   const buckets = new Map<string, TransferRow[]>();
 
@@ -350,7 +367,8 @@ function buildDailyStats(transfers: TransferRow[], from: Date) {
     if (t.initiatedAt < from) continue;
     const date = t.initiatedAt.toISOString().slice(0, 10);
     if (!buckets.has(date)) buckets.set(date, []);
-    buckets.get(date)!.push(t);
+    const bucket = buckets.get(date);
+    if (bucket) bucket.push(t);
   }
 
   return [...buckets.entries()]
@@ -380,12 +398,6 @@ function buildDailyStats(transfers: TransferRow[], from: Date) {
       };
     });
 }
-
-function successRate(completed: number, failed: number, stuck: number): number {
-  const total = completed + failed + stuck;
-  return total === 0 ? 100 : (completed / total) * 100;
-}
-
 
 /**
  * Derive a daily status from the day's success rate.

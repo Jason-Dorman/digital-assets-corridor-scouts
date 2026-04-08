@@ -165,7 +165,22 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 // Serialization
 // ---------------------------------------------------------------------------
 
-function serializeCorridor(c: CorridorMetrics) {
+function serializeCorridor(c: CorridorMetrics): {
+  corridorId: string;
+  bridge: string;
+  sourceChain: string;
+  destChain: string;
+  status: string;
+  metrics: CorridorMetrics['metrics'];
+  pool: {
+    tvlUsd: number;
+    utilization: number;
+    availableLiquidity: number;
+    fragility: string;
+    fragilityReason: string | null;
+  };
+  lastTransferAt: string | null;
+} {
   // When corridors are read back from the Redis cache, Date objects are
   // deserialized as strings. Handle both to avoid a TypeError on cache hits.
   const lastTransferAt =
@@ -195,7 +210,7 @@ function serializeCorridor(c: CorridorMetrics) {
   };
 }
 
-function validationError(field: string, value: string, message: string) {
+function validationError(field: string, value: string, message: string): NextResponse {
   return NextResponse.json(
     {
       error: {

@@ -27,6 +27,7 @@
 
 import { Contract, Interface, type Log } from 'ethers';
 
+import { logger } from '../lib/logger';
 import { BaseScout } from './base';
 import {
   CCTP_TOKEN_MESSENGER_ADDRESSES,
@@ -89,7 +90,7 @@ const MESSAGE_TRANSMITTER_IFACE = new Interface(MESSAGE_TRANSMITTER_ABI);
 // ---------------------------------------------------------------------------
 
 export class CCTPScout extends BaseScout {
-  constructor(onEvent: (event: import('../types').TransferEvent) => Promise<void>) {
+  constructor(onEvent: (event: TransferEvent) => Promise<void>) {
     super(CCTP_SCOUT_CHAINS, onEvent);
   }
 
@@ -142,7 +143,7 @@ export class CCTPScout extends BaseScout {
       try {
         tokenMessengerAddress = this.getContractAddress(chain);
       } catch (error) {
-        console.error('[CCTPScout] No TokenMessenger address — skipping chain', { chain, error });
+        logger.error('[CCTPScout] No TokenMessenger address — skipping chain', { chain, error: error instanceof Error ? error.message : String(error) });
         continue;
       }
 
@@ -158,11 +159,11 @@ export class CCTPScout extends BaseScout {
             await this.emit(event);
           }
         } catch (error) {
-          console.error('[CCTPScout] Failed to process DepositForBurn', {
+          logger.error('[CCTPScout] Failed to process DepositForBurn', {
             chain,
             blockNumber: log.blockNumber,
             txHash: log.transactionHash,
-            error,
+            error: error instanceof Error ? error.message : String(error),
           });
         }
       };
@@ -176,7 +177,7 @@ export class CCTPScout extends BaseScout {
       try {
         messageTransmitterAddress = this.getMessageTransmitterAddress(chain);
       } catch (error) {
-        console.error('[CCTPScout] No MessageTransmitter address — completions will not be tracked', { chain, error });
+        logger.error('[CCTPScout] No MessageTransmitter address — completions will not be tracked', { chain, error: error instanceof Error ? error.message : String(error) });
         // Deposit listener for this chain is already registered.
         // Skip only the completion side; continue to next chain.
         continue;
@@ -198,11 +199,11 @@ export class CCTPScout extends BaseScout {
             await this.emit(event);
           }
         } catch (error) {
-          console.error('[CCTPScout] Failed to process MessageReceived', {
+          logger.error('[CCTPScout] Failed to process MessageReceived', {
             chain,
             blockNumber: log.blockNumber,
             txHash: log.transactionHash,
-            error,
+            error: error instanceof Error ? error.message : String(error),
           });
         }
       };
@@ -261,7 +262,7 @@ export class CCTPScout extends BaseScout {
 
       const destChain = CCTP_DOMAIN_TO_CHAIN.get(Number(destinationDomain));
       if (destChain === undefined) {
-        console.warn('[CCTPScout] Skipping deposit — unrecognised destination domain', {
+        logger.warn('[CCTPScout] Skipping deposit — unrecognised destination domain', {
           destinationDomain: destinationDomain.toString(),
           nonce: nonce.toString(),
         });
@@ -283,9 +284,9 @@ export class CCTPScout extends BaseScout {
         blockNumber: BigInt(log.blockNumber),
       };
     } catch (error) {
-      console.error('[CCTPScout] Failed to decode DepositForBurn log', {
+      logger.error('[CCTPScout] Failed to decode DepositForBurn log', {
         blockNumber: log.blockNumber,
-        error,
+        error: error instanceof Error ? error.message : String(error),
       });
       return null;
     }
@@ -322,7 +323,7 @@ export class CCTPScout extends BaseScout {
 
       const sourceChain = CCTP_DOMAIN_TO_CHAIN.get(Number(sourceDomain));
       if (sourceChain === undefined) {
-        console.warn('[CCTPScout] Skipping fill — unrecognised source domain', {
+        logger.warn('[CCTPScout] Skipping fill — unrecognised source domain', {
           sourceDomain: sourceDomain.toString(),
           nonce: nonce.toString(),
         });
@@ -352,9 +353,9 @@ export class CCTPScout extends BaseScout {
         blockNumber: BigInt(log.blockNumber),
       };
     } catch (error) {
-      console.error('[CCTPScout] Failed to decode MessageReceived log', {
+      logger.error('[CCTPScout] Failed to decode MessageReceived log', {
         blockNumber: log.blockNumber,
-        error,
+        error: error instanceof Error ? error.message : String(error),
       });
       return null;
     }

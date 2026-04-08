@@ -13,31 +13,18 @@
  */
 
 import { db } from './db';
+import { dbBreaker } from './db-breaker';
 import { calculateHealthStatus } from '../calculators/health';
 import { calculateFragility } from '../calculators/fragility';
 import { logger } from './logger';
 import { round2 } from './round';
+import { calculatePercentile, successRate } from './stats';
 import type { HealthStatus, FragilityLevel } from '../types/index';
 import type { BridgeName } from './constants';
 import { ANOMALY_THRESHOLDS, STABLECOINS } from './constants';
 
-// ---------------------------------------------------------------------------
-// Percentile (DATA-MODEL.md §10.1)
-// ---------------------------------------------------------------------------
-
-/**
- * Compute the Nth percentile of an array of numbers using linear interpolation.
- * Returns 0 for empty arrays.
- */
-export function calculatePercentile(values: number[], percentile: number): number {
-  if (values.length === 0) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const index = (percentile / 100) * (sorted.length - 1);
-  const lower = Math.floor(index);
-  const upper = Math.ceil(index);
-  if (lower === upper) return sorted[lower];
-  return sorted[lower] + (sorted[upper] - sorted[lower]) * (index - lower);
-}
+// Re-export for existing consumers (corridors/[id]/route.ts, impact/estimate/route.ts)
+export { calculatePercentile } from './stats';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -105,39 +92,41 @@ export async function fetchAllCorridorMetrics(): Promise<CorridorDataResult> {
   const twentyFourHoursAgo = new Date(now.getTime() - 86_400_000);
   const sevenDaysAgo = new Date(now.getTime() - 7 * 86_400_000);
 
-  const [rawTransfers, rawPools] = await Promise.all([
-    db.transfer.findMany({
-      where: { initiatedAt: { gte: sevenDaysAgo } },
-      select: {
-        bridge: true,
-        sourceChain: true,
-        destChain: true,
-        status: true,
-        durationSeconds: true,
-        amountUsd: true,
-        initiatedAt: true,
-      },
-      orderBy: { initiatedAt: 'desc' },
-      take: ANOMALY_THRESHOLDS.MAX_TRANSFER_QUERY_ROWS,
-    }),
-    db.poolSnapshot.findMany({
-      where: {
-        recordedAt: { gte: twentyFourHoursAgo },
-        asset: { in: [...STABLECOINS] },
-      },
-      select: {
-        poolId: true,
-        bridge: true,
-        chain: true,
-        tvlUsd: true,
-        utilization: true,
-        availableLiquidity: true,
-        recordedAt: true,
-      },
-      orderBy: { recordedAt: 'desc' },
-      take: ANOMALY_THRESHOLDS.MAX_POOL_SNAPSHOT_QUERY_ROWS,
-    }),
-  ]);
+  const [rawTransfers, rawPools] = await dbBreaker.execute(() =>
+    Promise.all([
+      db.transfer.findMany({
+        where: { initiatedAt: { gte: sevenDaysAgo } },
+        select: {
+          bridge: true,
+          sourceChain: true,
+          destChain: true,
+          status: true,
+          durationSeconds: true,
+          amountUsd: true,
+          initiatedAt: true,
+        },
+        orderBy: { initiatedAt: 'desc' },
+        take: ANOMALY_THRESHOLDS.MAX_TRANSFER_QUERY_ROWS,
+      }),
+      db.poolSnapshot.findMany({
+        where: {
+          recordedAt: { gte: twentyFourHoursAgo },
+          asset: { in: [...STABLECOINS] },
+        },
+        select: {
+          poolId: true,
+          bridge: true,
+          chain: true,
+          tvlUsd: true,
+          utilization: true,
+          availableLiquidity: true,
+          recordedAt: true,
+        },
+        orderBy: { recordedAt: 'desc' },
+        take: ANOMALY_THRESHOLDS.MAX_POOL_SNAPSHOT_QUERY_ROWS,
+      }),
+    ]),
+  );
 
   if (rawTransfers.length === ANOMALY_THRESHOLDS.MAX_TRANSFER_QUERY_ROWS) {
     logger.warn('[corridor-metrics] Transfer query hit row cap – corridor metrics may be incomplete', {
@@ -158,7 +147,8 @@ export async function fetchAllCorridorMetrics(): Promise<CorridorDataResult> {
   for (const t of rawTransfers) {
     const key = `${t.bridge}_${t.sourceChain}_${t.destChain}`;
     if (!corridorMap.has(key)) corridorMap.set(key, []);
-    corridorMap.get(key)!.push(t);
+    const corridor = corridorMap.get(key);
+    if (corridor) corridor.push(t);
   }
 
   // Build per-poolId latest/oldest snapshots (rawPools ordered recordedAt DESC,
@@ -307,11 +297,3 @@ export async function fetchAllCorridorMetrics(): Promise<CorridorDataResult> {
   return { corridors, totalTransfers24h, overallSuccessRate24h };
 }
 
-// ---------------------------------------------------------------------------
-// Private helpers
-// ---------------------------------------------------------------------------
-
-function successRate(completed: number, failed: number, stuck: number): number {
-  const total = completed + failed + stuck;
-  return total === 0 ? 100 : (completed / total) * 100;
-}

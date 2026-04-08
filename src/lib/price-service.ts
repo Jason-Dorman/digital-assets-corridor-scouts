@@ -13,6 +13,8 @@
  * null for amountUsd when price is 0.
  */
 
+import { logger } from './logger';
+
 export interface PriceService {
   getPrice(symbol: string): Promise<number>;
   getPrices(symbols: string[]): Promise<Record<string, number>>;
@@ -64,7 +66,7 @@ export class SimplePriceService implements PriceService {
       const data = (await response.json()) as Record<string, { usd?: number }>;
       return data[coinId]?.usd ?? 0;
     } catch (error) {
-      console.error(`[PriceService] Failed to fetch price for ${symbol}:`, error);
+      logger.error(`[PriceService] Failed to fetch price for ${symbol}`, { error: error instanceof Error ? error.message : String(error) });
       return 0;
     }
   }

@@ -20,6 +20,7 @@
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 
+import { logger } from '../../../../lib/logger';
 import { PoolProcessor } from '../../../../processors/pool';
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
@@ -37,7 +38,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     await processor.run();
     return NextResponse.json({ ok: true });
   } catch (error) {
-    console.error('[cron/pool-snapshots] Unhandled error:', error);
+    logger.error('[cron/pool-snapshots] Unhandled error', { error: error instanceof Error ? error.message : String(error) });
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

@@ -70,8 +70,6 @@ import { GET } from '../../../src/app/api/corridors/[id]/route';
 // ---------------------------------------------------------------------------
 
 const NOW = new Date('2026-04-03T12:00:00.000Z');
-const ONE_HOUR_AGO       = new Date(NOW.getTime() - 3_600_000);
-const TWENTY_FOUR_AGO    = new Date(NOW.getTime() - 86_400_000);
 
 function makeTransfer(overrides: {
   status?: string;

@@ -19,10 +19,11 @@
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { db } from '../../../../lib/db';
+import { dbBreaker } from '../../../../lib/db-breaker';
 import { calculateImpact, IMPACT_DISCLAIMER } from '../../../../calculators/impact';
 import { calculateFragility } from '../../../../calculators/fragility';
 import { calculateHealthStatus } from '../../../../calculators/health';
-import { calculatePercentile } from '../../../../lib/corridor-metrics';
+import { calculatePercentile, successRate } from '../../../../lib/stats';
 import { round1, round2 } from '../../../../lib/round';
 import { logger } from '../../../../lib/logger';
 import { ANOMALY_THRESHOLDS, VALID_BRIDGES, VALID_CHAIN_NAMES, STABLECOINS } from '../../../../lib/constants';
@@ -76,24 +77,26 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // Fetch pool snapshots + corridor transfer data in parallel.
     // Pool snapshots: fetch both dest and source chains so we can fall back to
     // source-chain data if dest has no snapshots (matching corridor-metrics.ts).
-    const [poolSnapshots24h, transfers7d] = await Promise.all([
-      db.poolSnapshot.findMany({
-        where: {
-          bridge: bridge as BridgeName,
-          chain: { in: [dest, source] },
-          asset: { in: [...STABLECOINS] },
-          recordedAt: { gte: twentyFourHoursAgo },
-        },
-        orderBy: { recordedAt: 'desc' },
-        take: ANOMALY_THRESHOLDS.MAX_POOL_SNAPSHOT_QUERY_ROWS,
-      }),
-      db.transfer.findMany({
-        where: { bridge: bridge as BridgeName, sourceChain: source, destChain: dest, initiatedAt: { gte: sevenDaysAgo } },
-        select: { status: true, durationSeconds: true, initiatedAt: true },
-        orderBy: { initiatedAt: 'desc' },
-        take: ANOMALY_THRESHOLDS.MAX_TRANSFER_QUERY_ROWS,
-      }),
-    ]);
+    const [poolSnapshots24h, transfers7d] = await dbBreaker.execute(() =>
+      Promise.all([
+        db.poolSnapshot.findMany({
+          where: {
+            bridge: bridge as BridgeName,
+            chain: { in: [dest, source] },
+            asset: { in: [...STABLECOINS] },
+            recordedAt: { gte: twentyFourHoursAgo },
+          },
+          orderBy: { recordedAt: 'desc' },
+          take: ANOMALY_THRESHOLDS.MAX_POOL_SNAPSHOT_QUERY_ROWS,
+        }),
+        db.transfer.findMany({
+          where: { bridge: bridge as BridgeName, sourceChain: source, destChain: dest, initiatedAt: { gte: sevenDaysAgo } },
+          select: { status: true, durationSeconds: true, initiatedAt: true },
+          orderBy: { initiatedAt: 'desc' },
+          take: ANOMALY_THRESHOLDS.MAX_TRANSFER_QUERY_ROWS,
+        }),
+      ]),
+    );
 
     // Prefer dest-chain snapshots; fall back to source-chain if dest has no data.
     // This matches the behaviour of corridor-metrics.ts which also prefers destChain.
@@ -229,12 +232,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function successRate(completed: number, failed: number, stuck: number): number {
-  const total = completed + failed + stuck;
-  return total === 0 ? 100 : (completed / total) * 100;
-}
-
-
 /**
  * Generate an actionable recommendation based on impact level and pool fragility.
  * Returns null when no specific advice is warranted.
@@ -258,7 +255,7 @@ function buildRecommendation(
   return null;
 }
 
-function validationError(field: string, value: string, message: string) {
+function validationError(field: string, value: string, message: string): NextResponse {
   return NextResponse.json(
     {
       error: {

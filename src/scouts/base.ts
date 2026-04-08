@@ -30,8 +30,10 @@
  */
 import type { JsonRpcProvider, Log } from 'ethers';
 
+import { logger } from '../lib/logger';
 import { getProvider } from '../lib/rpc';
-import { type ChainName } from '../lib/constants';
+import { resilientRpcCall } from '../lib/resilient-rpc';
+import { CHAIN_IDS, type ChainName } from '../lib/constants';
 import type { TransferEvent } from '../types';
 
 /** Maximum number of block timestamps to cache per scout instance. */
@@ -129,12 +131,28 @@ export abstract class BaseScout {
     const cached = this.blockCache.get(cacheKey);
     if (cached !== undefined) return cached;
 
-    const block = await provider.getBlock(blockNumber);
+    // Resolve chain name for fallback provider lookup
+    const chain = (Object.entries(CHAIN_IDS) as [ChainName, number][])
+      .find(([, id]) => id === chainId)?.[0];
+
     let timestamp: Date;
-    if (block !== null) {
-      timestamp = new Date(block.timestamp * 1000);
-    } else {
-      console.warn('[BaseScout] Block not found — using wall-clock time as fallback; affected timestamps may be inaccurate', {
+    try {
+      const block = await resilientRpcCall(
+        (fallbackProvider) => (fallbackProvider ?? provider).getBlock(blockNumber),
+        { label: 'getBlockTimestamp', chain, maxAttempts: 3 },
+      );
+
+      if (block !== null) {
+        timestamp = new Date(block.timestamp * 1000);
+      } else {
+        logger.warn('[BaseScout] Block not found — using wall-clock time as fallback; affected timestamps may be inaccurate', {
+          chainId,
+          blockNumber,
+        });
+        timestamp = new Date();
+      }
+    } catch {
+      logger.warn('[BaseScout] All RPC attempts failed for getBlock — using wall-clock time as fallback; affected timestamps may be inaccurate', {
         chainId,
         blockNumber,
       });

@@ -639,22 +639,25 @@ describe('handleCompletion — slow path (DB fallback after restart)', () => {
 // ---------------------------------------------------------------------------
 
 describe('handleCompletion — orphaned (no initiation found)', () => {
-  it('logs a warning and does NOT update the database', async () => {
+  it('enqueues to orphan queue and does NOT update the database', async () => {
     mockFindUnique.mockResolvedValue(null);
     const consoleSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
     const processor = new TransferProcessor();
-    await processor.processEvent(makeCompletion());
+    const event = makeCompletion({ transferId: 'orphan-1' });
+    await processor.processEvent(event);
     expect(mockUpdate).not.toHaveBeenCalled();
+    expect(processor.orphanQueue.has('orphan-1')).toBe(true);
     consoleSpy.mockRestore();
   });
 
-  it('logs a warning that includes the transferId', async () => {
+  it('logs a warning via orphan queue that includes the transferId', async () => {
     mockFindUnique.mockResolvedValue(null);
     const consoleSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
     const processor = new TransferProcessor();
     await processor.processEvent(makeCompletion({ transferId: 'orphan-99' }));
     expect(consoleSpy).toHaveBeenCalledWith(
-      expect.stringContaining('orphan-99'),
+      expect.stringContaining('completion without matching initiation'),
+      expect.objectContaining({ transferId: 'orphan-99' }),
     );
     consoleSpy.mockRestore();
   });

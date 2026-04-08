@@ -158,8 +158,8 @@ describe('run() — bridge dispatch', () => {
     expect(mockCreate).toHaveBeenCalledTimes(EXPECTED_CCTP_ROWS);
     // Error logged once per rejected bridge (SpokePool + HubPool = 2 rejections)
     expect(consoleSpy).toHaveBeenCalledWith(
-      expect.stringContaining('[PoolProcessor] Bridge fetch failed:'),
-      expect.any(Error),
+      expect.stringContaining('[PoolProcessor] Bridge fetch failed'),
+      expect.objectContaining({ reason: expect.any(String) }),
     );
     consoleSpy.mockRestore();
   });
@@ -272,7 +272,7 @@ describe('Across SpokePool snapshots', () => {
     expect(mockCreate).toHaveBeenCalledTimes(EXPECTED_TOTAL_SNAPSHOTS - 1);
     expect(consoleSpy).toHaveBeenCalledWith(
       expect.stringContaining('Across SpokePool balanceOf failed'),
-      expect.any(Error),
+      expect.objectContaining({ error: expect.any(String) }),
     );
     consoleSpy.mockRestore();
   });
@@ -402,7 +402,7 @@ describe('Across HubPool snapshots', () => {
     expect(mockCreate).toHaveBeenCalledTimes(EXPECTED_TOTAL_SNAPSHOTS - 1);
     expect(consoleSpy).toHaveBeenCalledWith(
       expect.stringContaining('Across HubPool pooledTokens failed'),
-      expect.any(Error),
+      expect.objectContaining({ error: expect.any(String) }),
     );
     consoleSpy.mockRestore();
   });
@@ -582,7 +582,7 @@ describe('enrichAndStore — DB error isolation', () => {
     // Error logged for the failing row
     expect(consoleSpy).toHaveBeenCalledWith(
       expect.stringContaining('Failed to store snapshot'),
-      expect.any(Error),
+      expect.objectContaining({ error: expect.any(String) }),
     );
     consoleSpy.mockRestore();
   });

@@ -21,6 +21,7 @@
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { db } from '../../../lib/db';
+import { dbBreaker } from '../../../lib/db-breaker';
 import { logger } from '../../../lib/logger';
 import { VALID_BRIDGES } from '../../../lib/constants';
 
@@ -87,15 +88,17 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       ...(corridorId ? { corridorId } : {}),
     };
 
-    const [anomalies, total] = await Promise.all([
-      db.anomaly.findMany({
-        where,
-        orderBy: { detectedAt: 'desc' },
-        take: limit,
-        skip: offset,
-      }),
-      db.anomaly.count({ where }),
-    ]);
+    const [anomalies, total] = await dbBreaker.execute(() =>
+      Promise.all([
+        db.anomaly.findMany({
+          where,
+          orderBy: { detectedAt: 'desc' },
+          take: limit,
+          skip: offset,
+        }),
+        db.anomaly.count({ where }),
+      ]),
+    );
 
     const serialized = anomalies.map(a => {
       const details = (a.details as Record<string, unknown> | null) ?? null;
@@ -200,7 +203,7 @@ function formatCorridorLabel(
   sourceChain: string | null,
   destChain: string | null,
 ): string {
-  const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+  const cap = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
   const bridgePart = cap(bridge);
   if (sourceChain && destChain) {
     return `${bridgePart} ${cap(sourceChain)}→${cap(destChain)}`;
@@ -210,7 +213,7 @@ function formatCorridorLabel(
   return bridgePart;
 }
 
-function validationError(field: string, value: string, message: string) {
+function validationError(field: string, value: string, message: string): NextResponse {
   return NextResponse.json(
     {
       error: {

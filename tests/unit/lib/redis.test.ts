@@ -3,9 +3,14 @@
  *
  * ioredis is fully mocked — no real Redis connection is made.
  * REDIS_URL is set before any module is required so requireEnv() succeeds.
+ *
+ * redis.ts uses lazy Proxy clients and deferred message listener registration:
+ *   - Clients are created on first property access (not at import time)
+ *   - The 'message' listener is registered on the first subscribe() call
+ *     (ensureMessageListener pattern), not at module load
  */
 
-// Must be set before redis.ts is evaluated (it calls requireEnv at module load)
+// Must be set before redis.ts is evaluated (it calls requireEnv at first access)
 process.env.REDIS_URL = 'redis://localhost:6379';
 
 // Shared mock functions so we can inspect calls across both client instances
@@ -104,15 +109,20 @@ describe('publish', () => {
 
 describe('subscribe', () => {
   /**
-   * The top-level 'message' dispatcher is registered once at module load
-   * (outside of subscribe()), not per subscribe() call. Capture it here,
-   * before beforeEach's mockOn.mockClear() wipes the call record.
+   * The 'message' dispatcher is registered lazily on the first subscribe() call
+   * via ensureMessageListener(), NOT at module load. We trigger it in beforeAll
+   * by calling subscribe() with a dummy handler, then capture the dispatcher.
    */
   let messageHandler: (channel: string, raw: string) => void;
 
-  beforeAll(() => {
-    const call = mockOn.mock.calls.find(([event]) => event === 'message');
-    if (!call) throw new Error('Expected redisSubscriber.on("message", ...) at module load');
+  beforeAll(async () => {
+    // Trigger ensureMessageListener() — this registers .on('message', fn)
+    await subscribe(REDIS_CHANNELS.TRANSFER_INITIATED, jest.fn());
+
+    const call = mockOn.mock.calls.find(
+      ([event]: [string]) => event === 'message',
+    );
+    if (!call) throw new Error('Expected redisSubscriber.on("message", ...) after first subscribe()');
     messageHandler = call[1];
   });
 
@@ -121,14 +131,25 @@ describe('subscribe', () => {
     mockOn.mockClear();
   });
 
-  it('registers a single top-level "message" dispatcher at module load', () => {
+  it('registers the "message" dispatcher on first subscribe() call', () => {
     // Verified by beforeAll — if messageHandler is set, .on('message', fn) was called
     expect(typeof messageHandler).toBe('function');
   });
 
+  it('does not register the "message" listener again on subsequent subscribe() calls', async () => {
+    mockOn.mockClear();
+    // Second subscribe — should NOT call .on('message', ...) again
+    await subscribe(REDIS_CHANNELS.TRANSFER_COMPLETED, jest.fn());
+    const messageCalls = mockOn.mock.calls.filter(
+      ([event]: [string]) => event === 'message',
+    );
+    expect(messageCalls).toHaveLength(0);
+  });
+
   it('subscribes to the given Redis channel', async () => {
-    await subscribe(REDIS_CHANNELS.TRANSFER_INITIATED, jest.fn());
-    expect(mockIoRedisSubscribe).toHaveBeenCalledWith('transfer:initiated');
+    // Use POOL_SNAPSHOT — a channel not yet subscribed in this test run
+    await subscribe(REDIS_CHANNELS.POOL_SNAPSHOT, jest.fn());
+    expect(mockIoRedisSubscribe).toHaveBeenCalledWith('pool:snapshot');
   });
 
   it('calls the handler with the superjson-parsed message on the correct channel', async () => {
